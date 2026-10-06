@@ -3,7 +3,7 @@ version: "0.4.1"
 description: "Alan's Way agent side: a designated proactive primary plus the workspace-browser skill and router scripts for the Hermes desktop companion."
 author: "capthvnsen, Hermes Agent"
 license: MIT
-homepage: "https://github.com/capthvnsen/alans-way-agents"
+homepage: "https://github.com/inteliodev/alans-way-agents"
 requires_hermes: ">=0.21"
 tags:
   - proactivity

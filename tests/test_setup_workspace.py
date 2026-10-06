@@ -41,6 +41,18 @@ class PrintModeTests(unittest.TestCase):
     def test_omits_bot_name_args_when_not_given(self):
         result = run("--bot-id", "bot_123")
         self.assertNotIn("--bot-name", result.stdout)
+        self.assertNotIn("HERMES_WORKSPACE_MAC_MCP", result.stdout)
+        self.assertNotIn("HERMES_WORKSPACE_MAC_NODE", result.stdout)
+
+    def test_writes_mac_mcp_and_node_when_given(self):
+        result = run("--bot-id", "bot_123",
+                     "--mac-mcp-path", "/Users/you/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs",
+                     "--mac-node-path", "/opt/homebrew/bin/node")
+        out = result.stdout
+        self.assertIn(
+            'HERMES_WORKSPACE_MAC_MCP: "/Users/you/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs"',
+            out)
+        self.assertIn('HERMES_WORKSPACE_MAC_NODE: "/opt/homebrew/bin/node"', out)
 
 
 class ConfigEditTests(unittest.TestCase):

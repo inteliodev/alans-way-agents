@@ -1,6 +1,10 @@
 # Alan's Way — agent plugin
 
-**The behavior half of [Hermes — Alan's Way](https://github.com/capthvnsen/alans-way).**
+**The behavior half of [Intelio](https://github.com/inteliodev/alans-way), Hayden Ashley's fork of [Hermes — Alan's Way](https://github.com/capthvnsen/alans-way) by capthvnsen.**
+This repository is `inteliodev/alans-way-agents`, the matching fork of
+[capthvnsen's agent plugin](https://github.com/capthvnsen/alans-way-agents).
+Install commands below use the fork. The original author remains capthvnsen.
+
 This repo is what you install *on the machine running your Hermes agents*
 (usually a VPS). The companion repo holds the Mac desktop app — this one holds
 what your agents need to think and act:
@@ -60,9 +64,16 @@ paste works too.)
 On the host that runs your Hermes gateway:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/capthvnsen/alans-way-agents/main/setup.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/inteliodev/alans-way-agents/main/setup.sh | bash -s -- \
     --bot-id YOUR_NUMERIC_BOT_ID --mac-ssh you@your-mac --restart
 ```
+
+The desktop checkout defaults to `inteliodev/alans-way` at branch
+`cursor/intelio-harness-layer-8db4` until that branch merges. Override with
+`ALANS_WAY_REPO`, `ALANS_WAY_REF` (branch, tag, or full SHA),
+`ALANS_WAY_AGENTS_REPO`, and `ALANS_WAY_AGENTS_REF`. `--dry-run` prints the
+plan and writes nothing. A Hostinger VPS with the Mac on Tailscale is covered
+in [docs/intelio-vps.md](docs/intelio-vps.md).
 
 or from a clone: `./setup.sh --bot-id ... --mac-ssh ... --restart`
 
@@ -87,9 +98,15 @@ The bootstrap runs every step in order and says what it did:
   re-run `setup.sh --bind`)
 - **Verify** — prints a pass/fail summary of the whole install
 
-Useful flags: `--profile NAME` for a named Hermes profile, `--verify` to audit
-without changing anything, `--non-interactive` for scripted runs,
-`--skip-browser` for proactivity-only installs.
+Useful flags: `--profile NAME` for a named Hermes profile (toolset
+enable/disable then use `hermes -p NAME`), `--mac-mcp-path` and
+`--mac-node-path` for the Mac connector and Homebrew node (non-interactive SSH
+does not load Homebrew's PATH), `--verify` to audit without changing anything,
+`--dry-run` to print the plan, `--non-interactive` for scripted runs,
+`--skip-browser` for proactivity-only installs. `--desktop-stack` is opt-in
+and installs localhost-only Xvfb/x11vnc/noVNC units for a non-root desktop
+user; it does not install apt packages, and the display stack is never
+auto-installed.
 
 ### Or let your agent do it
 
@@ -100,9 +117,13 @@ the machines if needed, runs the same `setup.sh`, and reports back. The
 
 ### 3. The Mac app
 
-Download the Mac app zip from the
-[latest release](https://github.com/capthvnsen/alans-way/releases), unzip, move
-the bundle to Applications, right-click → Open (it's unsigned). Sign in to Telegram inside
+Download the Mac app from the Intelio fork
+([inteliodev/alans-way](https://github.com/inteliodev/alans-way), branch
+`cursor/intelio-harness-layer-8db4` until it merges; the original releases
+remain at [capthvnsen/alans-way](https://github.com/capthvnsen/alans-way/releases)).
+Intelio looks for `~/Applications/Intelio.app`, `/Applications/Intelio.app`,
+or a source checkout at `~/code/alans-way-intelio`. Unzip a release build,
+move the bundle to Applications, right-click → Open (it's unsigned). Sign in to Telegram inside
 the app, then **Settings → Agent setup**: the checklist shows what's already
 done — Telegram sign-in, discovered bots, both SSH addresses, connector
 status. Save the two SSH addresses, use **Copy setup command** (the bootstrap
@@ -209,7 +230,7 @@ VPS browser owns.
 alans-way/            the plugin (plugin.yaml + tools + observer + skills + router + mac-watch)
 deploy/               systemd unit for the Mac availability watcher
 hooks/                gateway startup hook (installed by setup.sh)
-docs/                 proactivity guide, agent-driven setup prompt
+docs/                 proactivity guide, agent-driven setup prompt, Intelio VPS runbook
 tests/                unittest suite — python3 -m unittest discover -s tests
 setup.sh              one-command bootstrap (install, wire, restart, bind, verify)
 setup-workspace.sh    per-bot mcp_servers config writer (called by setup.sh)

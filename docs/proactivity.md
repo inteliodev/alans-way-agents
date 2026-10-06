@@ -26,7 +26,7 @@ A reviewed repository subdirectory install also works; pin the source and keep
 native hook installation separate:
 
 ```sh
-hermes plugins install capthvnsen/alans-way-agents#alans-way --no-enable
+hermes plugins install inteliodev/alans-way-agents#alans-way --no-enable
 ```
 
 Enabling plugin discovery is distinct from enabling automatic proactivity or

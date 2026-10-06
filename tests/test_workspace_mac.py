@@ -244,6 +244,69 @@ class MacBackendCommandTests(unittest.TestCase):
             result, script = self.run_remote(home, node="node")
             self.assertEqual(result.stdout.strip(), f"path-node {script} --bot-id bot-1 --bot-name Alan's bot")
 
+    def test_intelio_bundle_uses_its_own_binary(self):
+        script = "/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs"
+        command = subprocess.run(
+            [NODE, "-e", "process.stdout.write(require(process.argv[1]).macBackendCommand("
+                         "process.argv[2], '', 'bot-1', ''))",
+             str(ROUTER), script],
+            capture_output=True, text=True, check=True).stdout
+        self.assertIn("ELECTRON_RUN_AS_NODE=1", command)
+        self.assertIn("/Applications/Intelio.app/Contents/MacOS/Intelio", command)
+
+    def test_source_checkout_tries_homebrew_node_before_path_node(self):
+        script = "/Users/you/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs"
+        command = subprocess.run(
+            [NODE, "-e", "process.stdout.write(require(process.argv[1]).macBackendCommand("
+                         "process.argv[2], '', 'bot-1', ''))",
+             str(ROUTER), script],
+            capture_output=True, text=True, check=True).stdout
+        self.assertIn("/opt/homebrew/bin/node", command)
+        self.assertIn("exec node", command)
+        self.assertNotIn("ELECTRON_RUN_AS_NODE", command)
+
+
+@unittest.skipUnless(NODE, "node is required for router discovery tests")
+class MacScriptDiscoveryTests(unittest.TestCase):
+    def router(self):
+        return subprocess.run(
+            [NODE, "-e",
+             "const r=require(process.argv[1]);"
+             "const alive='true';"
+             "const scripts=r.defaultMacScripts();"
+             "process.stdout.write(JSON.stringify({"
+             "scripts,"
+             "clause:r.macScriptProbeClause(scripts[0], alive),"
+             "legacy:r.macScriptProbeClause(scripts[3], alive),"
+             "home:r.acceptProbedMacScript("
+             "'/Users/you/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs',"
+             "scripts),"
+             "abs:r.acceptProbedMacScript("
+             "'/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs',"
+             "scripts),"
+             "src:r.acceptProbedMacScript("
+             "'/home/user/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs',"
+             "scripts),"
+             "evil:r.acceptProbedMacScript('/tmp/browser-mcp.cjs', scripts)"
+             "}))",
+             str(ROUTER)],
+            capture_output=True, text=True, check=True)
+
+    def test_default_order_prefers_intelio_then_legacy_bundles(self):
+        payload = json.loads(self.router().stdout)
+        scripts = payload["scripts"]
+        self.assertEqual(scripts[0], "~/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs")
+        self.assertEqual(scripts[1], "/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs")
+        self.assertEqual(scripts[2], "~/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs")
+        self.assertIn("/Applications/alans-way-localapp.app/Contents/Resources/app/scripts/browser-mcp.cjs", scripts)
+        self.assertTrue(payload["home"])
+        self.assertTrue(payload["abs"])
+        self.assertTrue(payload["src"])
+        self.assertFalse(payload["evil"])
+        self.assertIn('"$HOME/Applications/Intelio.app/', payload["clause"])
+        self.assertNotIn("'$HOME/", payload["clause"])
+        self.assertIn("'/Applications/alans-way-localapp.app/", payload["legacy"])
+
 
 @unittest.skipUnless(SH, "sh is required for watcher tests")
 class MacWatchScriptTests(MacStateEnvTest):

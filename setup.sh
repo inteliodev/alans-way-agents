@@ -3,51 +3,93 @@
 # gateway (usually a VPS). Detects what's missing, installs what it can, and
 # prints exact guidance for what it can't.
 #
-#   curl -fsSL https://raw.githubusercontent.com/capthvnsen/alans-way-agents/main/setup.sh | bash -s -- --bot-id 123456789 --mac-ssh me@mymac
+#   curl -fsSL https://raw.githubusercontent.com/inteliodev/alans-way-agents/main/setup.sh | bash -s -- --bot-id 123456789 --mac-ssh me@mymac
 #   ./setup.sh --bot-id 123456789 --mac-ssh me@mymac            # from a clone
 #   ./setup.sh --verify                                       # re-check an install
+#   ./setup.sh --dry-run --bot-id 123456789                   # print the plan, write nothing
+#
+# Repo overrides (Intelio fork of capthvnsen's Alan's Way):
+#   ALANS_WAY_AGENTS_REPO   default https://github.com/inteliodev/alans-way-agents
+#   ALANS_WAY_AGENTS_REF    optional branch, tag, or full 40-char SHA
+#   ALANS_WAY_REPO          default https://github.com/inteliodev/alans-way
+#   ALANS_WAY_REF           default branch cursor/intelio-harness-layer-8db4
+#                           until that branch merges; then set main or a SHA
 #
 # Flags: --bot-id ID --bot-name NAME --mac-ssh HOST --profile NAME
+#        --mac-mcp-path PATH --mac-node-path PATH
 #        --hermes-home DIR --desktop-dir DIR --skip-browser --skip-services
-#        --bind --timezone IANA --restart --non-interactive --verify
+#        --desktop-stack --desktop-user USER --novnc-bind ADDR --vnc-password-file PATH
+#        --bind --timezone IANA --restart --non-interactive --verify --dry-run
 set -eu
 
-REPO_URL="https://github.com/capthvnsen/alans-way-agents"
-DESKTOP_REPO_URL="https://github.com/capthvnsen/alans-way"
+# Single overridable clone locations. Do not clobber a value the caller set,
+# including an explicit empty ALANS_WAY_AGENTS_REF (default branch).
+: "${ALANS_WAY_AGENTS_REPO:=https://github.com/inteliodev/alans-way-agents}"
+: "${ALANS_WAY_REPO:=https://github.com/inteliodev/alans-way}"
+if [ "${ALANS_WAY_REF+set}" != set ]; then
+  ALANS_WAY_REF="cursor/intelio-harness-layer-8db4"
+fi
+: "${ALANS_WAY_AGENTS_REF:=}"
+REPO_URL="$ALANS_WAY_AGENTS_REPO"
+DESKTOP_REPO_URL="$ALANS_WAY_REPO"
 PLUGIN_NAME="alans-way"
 
 BOT_ID="" BOT_NAME="" MAC_SSH="" PROFILE="" CONFIG="" TIMEZONE=""
-HERMES_HOME="" DESKTOP_DIR=""
+HERMES_HOME="" DESKTOP_DIR="" MAC_MCP="" MAC_NODE=""
+DESKTOP_USER="" NOVNC_BIND="127.0.0.1" VNC_PASSFILE=""
 SKIP_BROWSER=0 SKIP_SERVICES=0 DO_BIND=0 DO_RESTART=0 NON_INTERACTIVE=0 VERIFY=0
+DO_DESKTOP=0 DRY_RUN=0 NOVNC_BIND_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bot-id) BOT_ID="$2"; shift 2;;
     --bot-name) BOT_NAME="$2"; shift 2;;
     --mac-ssh) MAC_SSH="$2"; shift 2;;
+    --mac-mcp-path) MAC_MCP="$2"; shift 2;;
+    --mac-node-path) MAC_NODE="$2"; shift 2;;
     --profile) PROFILE="$2"; shift 2;;
     --config) CONFIG="$2"; shift 2;;
     --hermes-home) HERMES_HOME="$2"; shift 2;;
     --desktop-dir) DESKTOP_DIR="$2"; shift 2;;
     --skip-browser) SKIP_BROWSER=1; shift;;
     --skip-services) SKIP_SERVICES=1; shift;;
+    --desktop-stack) DO_DESKTOP=1; shift;;
+    --desktop-user) DESKTOP_USER="$2"; shift 2;;
+    --novnc-bind) NOVNC_BIND="$2"; NOVNC_BIND_SET=1; shift 2;;
+    --vnc-password-file) VNC_PASSFILE="$2"; shift 2;;
     --bind) DO_BIND=1; shift;;
     --timezone) TIMEZONE="$2"; shift 2;;
     --restart) DO_RESTART=1; shift;;
     --non-interactive) NON_INTERACTIVE=1; shift;;
     --verify) VERIFY=1; shift;;
+    --dry-run) DRY_RUN=1; shift;;
     -h|--help)
       cat <<'EOF'
 setup.sh — Alan's Way bootstrap for the Hermes gateway host (usually a VPS).
   --bot-id ID      numeric Telegram bot ID that owns browser tabs
   --bot-name NAME  display name on the agent cursor
   --mac-ssh HOST   how this host reaches your Mac over ssh (Tailscale name/IP)
-  --profile NAME   Hermes profile to configure (default: main config)
+  --profile NAME   Hermes profile to configure (default: main config).
+                   tools enable/disable run against this profile.
+  --mac-mcp-path   Mac browser-mcp.cjs, written as HERMES_WORKSPACE_MAC_MCP
+  --mac-node-path  Mac node binary (SSH does not load Homebrew's PATH),
+                   written as HERMES_WORKSPACE_MAC_NODE. Often
+                   /opt/homebrew/bin/node
+  --desktop-stack  install Xvfb, localhost x11vnc, and noVNC systemd units.
+                   Opt-in. Does not apt-get install packages.
+  --desktop-user   non-root account those units run as (required as root)
+  --novnc-bind     websockify address (default 127.0.0.1). Loopback or a
+                   Tailscale address. Public binds are refused.
+  --vnc-password-file
+                   x11vnc -storepasswd file installed mode 600 for the desktop user
   --bind           bind proactivity to a Telegram DM route (prompted)
   --timezone IANA  your local zone for proactivity quiet hours, e.g. Europe/Berlin
   --restart        restart the gateway at the end without asking
   --verify         check an existing install without changing anything
+  --dry-run        print the install plan and write nothing
   --skip-browser / --skip-services / --non-interactive for constrained runs
+Repos: ALANS_WAY_REPO, ALANS_WAY_REF (default cursor/intelio-harness-layer-8db4),
+       ALANS_WAY_AGENTS_REPO, ALANS_WAY_AGENTS_REF. See docs/intelio-vps.md.
 EOF
       exit 0;;
     *) echo "setup: unknown arg: $1" >&2; exit 2;;
@@ -77,12 +119,121 @@ confirm() { # confirm <prompt> — empty means no
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+safe_name() {
+  case "$1" in
+    ''|*[!0-9A-Za-z_.-]*) return 1;;
+  esac
+  return 0
+}
+
+if [ -n "$PROFILE" ] && ! safe_name "$PROFILE"; then
+  echo "setup: bad --profile" >&2
+  exit 2
+fi
+if [ -n "$DESKTOP_USER" ] && ! safe_name "$DESKTOP_USER"; then
+  echo "setup: bad --desktop-user" >&2
+  exit 2
+fi
+if [ "$DRY_RUN" = 1 ]; then
+  NON_INTERACTIVE=1
+fi
+
+is_full_sha() {
+  case "$1" in
+    *[!0-9a-fA-F]*) return 1;;
+  esac
+  [ "${#1}" -eq 40 ]
+}
+
+# clone_pinned <url> <dest> <ref>. Empty ref tracks the remote default branch.
+# A 40-character hex ref is fetched as that commit; anything else is a branch or tag.
+clone_pinned() {
+  _url=$1
+  _dest=$2
+  _ref=$3
+  rm -rf "$_dest"
+  if [ -z "$_ref" ]; then
+    git clone -q --depth 1 "$_url" "$_dest"
+    return
+  fi
+  if is_full_sha "$_ref"; then
+    mkdir -p "$_dest"
+    git -C "$_dest" init -q
+    git -C "$_dest" remote add origin "$_url"
+    git -C "$_dest" fetch -q --depth 1 origin "$_ref"
+    git -C "$_dest" checkout -q --detach FETCH_HEAD
+  else
+    git clone -q --depth 1 --branch "$_ref" "$_url" "$_dest"
+  fi
+}
+
+# update_checkout <dest> <ref> <url>. Retarget origin so an older upstream
+# checkout follows the fork instead of pulling a branch that remote lacks.
+update_checkout() {
+  _dest=$1
+  _ref=$2
+  _url=$3
+  if [ -n "$_url" ]; then
+    git -C "$_dest" remote set-url origin "$_url"
+  fi
+  if [ -z "$_ref" ]; then
+    git -C "$_dest" pull --ff-only -q
+    return
+  fi
+  git -C "$_dest" fetch -q origin "$_ref"
+  git -C "$_dest" checkout -q --detach FETCH_HEAD
+}
+
+# hermes -p applies only when --profile was passed. tools enable/disable must
+# use this; a bare `hermes tools` call edits the default home, not the profile.
+hermes_profile() {
+  if [ -n "$PROFILE" ]; then
+    hermes -p "$PROFILE" "$@"
+  else
+    hermes "$@"
+  fi
+}
+
+hermes_profile_text() {
+  if [ -n "$PROFILE" ]; then
+    printf 'hermes -p %s' "$PROFILE"
+  else
+    printf '%s' "hermes"
+  fi
+}
+
+novnc_bind_ok() {
+  _checker=""
+  if [ -n "${REPO_DIR:-}" ] && [ -f "$REPO_DIR/scripts/novnc_bind.py" ]; then
+    _checker="$REPO_DIR/scripts/novnc_bind.py"
+  elif [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/scripts/novnc_bind.py" ]; then
+    _checker="$SCRIPT_DIR/scripts/novnc_bind.py"
+  fi
+  if [ -z "$_checker" ]; then
+    echo "setup: novnc bind checker missing" >&2
+    return 1
+  fi
+  python3 "$_checker" "$1"
+}
+
 # Resolve the plugin repo: beside this script when run from a clone, else clone.
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo "")"
 if [ -f "$SCRIPT_DIR/setup-workspace.sh" ] && [ -d "$SCRIPT_DIR/alans-way" ]; then
   REPO_DIR="$SCRIPT_DIR"
 else
   REPO_DIR=""
+fi
+
+if [ -f "${REPO_DIR:-$SCRIPT_DIR}/scripts/chromium-profile.sh" ]; then
+  # shellcheck disable=SC1091
+  . "${REPO_DIR:-$SCRIPT_DIR}/scripts/chromium-profile.sh"
+fi
+
+if [ "$DO_DESKTOP" = 1 ] || [ "$NOVNC_BIND_SET" = 1 ]; then
+  if ! novnc_bind_ok "$NOVNC_BIND"; then
+    echo "setup: refusing --novnc-bind ${NOVNC_BIND} (loopback or a Tailscale address only; never a public bind)" >&2
+    exit 2
+  fi
 fi
 
 # ---------------------------------------------------------------- preflight
@@ -97,6 +248,38 @@ have python3 || bad "python3 required"
 have node || warn "node not on PATH — required for the browser connector"
 [ -d "$HERMES_HOME" ] && ok "HERMES_HOME: $HERMES_HOME" || warn "HERMES_HOME $HERMES_HOME does not exist yet (created on first hermes run)"
 
+if [ "$DRY_RUN" = 1 ]; then
+  step "Dry run"
+  say "  agents repo: $ALANS_WAY_AGENTS_REPO${ALANS_WAY_AGENTS_REF:+ @ $ALANS_WAY_AGENTS_REF}"
+  if [ -n "$ALANS_WAY_REF" ]; then
+    say "  desktop repo: $ALANS_WAY_REPO @ $ALANS_WAY_REF"
+  else
+    say "  desktop repo: $ALANS_WAY_REPO @ default branch"
+  fi
+  say "  dry-run: $(hermes_profile_text) tools enable proactivity --platform telegram"
+  say "  dry-run: $(hermes_profile_text) tools disable browser --platform telegram"
+  if [ -n "$MAC_MCP" ]; then say "  HERMES_WORKSPACE_MAC_MCP: $MAC_MCP"; fi
+  if [ -n "$MAC_NODE" ]; then say "  HERMES_WORKSPACE_MAC_NODE: $MAC_NODE"; fi
+  if [ "$DO_DESKTOP" = 1 ]; then
+    say "  desktop units: intelio-xvfb.service intelio-x11vnc.service intelio-novnc.service"
+    say "  x11vnc binds localhost only; novnc bind: $NOVNC_BIND"
+    say "  desktop user: ${DESKTOP_USER:-<current user, or required when root>}"
+    if command -v chromium >/dev/null 2>&1 && command -v chromium_user_data_dir >/dev/null 2>&1; then
+      _chrome=$(command -v chromium || true)
+      _home="$HOME"
+      if [ -n "$DESKTOP_USER" ]; then
+        _got=$(getent passwd "$DESKTOP_USER" 2>/dev/null | cut -d: -f6 || true)
+        [ -n "$_got" ] && _home=$_got
+      fi
+      say "  chromium user-data-dir: $(chromium_user_data_dir "$_chrome" "$_home" "${HERMES_VPS_BROWSER_DATA:-$HOME/.local/share/hermes-alans-way/browser}/chromium")"
+    else
+      say "  snap Chromium profile: <desktop-home>/snap/chromium/common/hermes-alans-way"
+    fi
+  fi
+  say "dry-run: no changes made"
+  exit 0
+fi
+
 if [ "$VERIFY" = 1 ]; then
   # --verify: report state without changing anything
   step "Install state"
@@ -107,10 +290,10 @@ if [ "$VERIFY" = 1 ]; then
     if awk '/^platform_toolsets:/{p=1;next} p&&/^  telegram:/{t=1;next} p&&/^  [a-z_]+:/{t=0} t&&/^    - proactivity[[:space:]]*$/{f=1} END{exit !f}' "$CFG_HOME/config.yaml"; then
       ok "proactivity toolset enabled for telegram"
     else
-      warn "proactivity toolset not enabled for telegram — proactive_control won't be callable in Telegram sessions (run: hermes tools enable proactivity --platform telegram)"
+      warn "proactivity toolset not enabled for telegram — proactive_control won't be callable in Telegram sessions (run: $(hermes_profile_text) tools enable proactivity --platform telegram)"
     fi
     if awk '/^platform_toolsets:/{p=1;next} p&&/^  telegram:/{t=1;next} p&&/^  [a-z_]+:/{t=0} t&&/^    - browser[[:space:]]*$/{f=1} END{exit !f}' "$CFG_HOME/config.yaml"; then
-      warn "built-in 'browser' toolset still enabled for telegram — the agent may bypass the workspace browser (run: hermes tools disable browser --platform telegram)"
+      warn "built-in 'browser' toolset still enabled for telegram — the agent may bypass the workspace browser (run: $(hermes_profile_text) tools disable browser --platform telegram)"
     else
       ok "built-in browser toolset disabled for telegram"
     fi
@@ -158,9 +341,13 @@ if [ -z "$REPO_DIR" ]; then
   step "Fetching alans-way-agents"
   REPO_DIR="$HOME/.local/share/alans-way-agents"
   if [ -d "$REPO_DIR/.git" ]; then
-    git -C "$REPO_DIR" pull --ff-only -q && ok "updated $REPO_DIR" || warn "could not update $REPO_DIR — using existing checkout"
+    update_checkout "$REPO_DIR" "$ALANS_WAY_AGENTS_REF" "$REPO_URL" && ok "updated $REPO_DIR" || warn "could not update $REPO_DIR — using existing checkout"
   else
-    git clone -q "$REPO_URL" "$REPO_DIR" && ok "cloned to $REPO_DIR" || { bad "git clone failed"; exit 1; }
+    clone_pinned "$REPO_URL" "$REPO_DIR" "$ALANS_WAY_AGENTS_REF" && ok "cloned to $REPO_DIR" || { bad "git clone failed"; exit 1; }
+  fi
+  if [ -f "$REPO_DIR/scripts/chromium-profile.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$REPO_DIR/scripts/chromium-profile.sh"
   fi
 fi
 
@@ -202,23 +389,23 @@ hermes plugins enable "$PLUGIN_NAME" >/dev/null 2>&1 || true
 # The control tool must be loaded into each messaging session's platform —
 # plugin toolsets are skipped when the platform's saved list predates the
 # plugin (recorded under known_plugin_toolsets). Enabling is idempotent.
-for platform in telegram; do
-  hermes tools enable proactivity --platform "$platform" >/dev/null 2>&1 \
-    && ok "proactivity toolset enabled for $platform" \
-    || warn "could not enable the proactivity toolset for $platform — proactive_control will not be callable in those sessions (run: hermes tools enable proactivity --platform $platform)"
-  # The workspace browser replaces Hermes' built-in browser tool: leaving both
-  # enabled lets the agent pick a different browser than the user's app.
-  # Reversible with: hermes tools enable browser --platform $platform
-  hermes tools disable browser --platform "$platform" >/dev/null 2>&1 \
-    && ok "built-in browser toolset disabled for $platform (workspace browser is the browser)" \
-    || warn "could not disable the built-in browser toolset for $platform — the agent may bypass the workspace browser (run: hermes tools disable browser --platform $platform)"
-done
+# One platform today. Kept as a straight call so --profile is always applied
+# (hermes -p must precede the subcommand).
+hermes_profile tools enable proactivity --platform telegram >/dev/null 2>&1 \
+  && ok "proactivity toolset enabled for telegram" \
+  || warn "could not enable the proactivity toolset for telegram — proactive_control will not be callable in those sessions (run: $(hermes_profile_text) tools enable proactivity --platform telegram)"
+# The workspace browser replaces Hermes' built-in browser tool: leaving both
+# enabled lets the agent pick a different browser than the user's app.
+# Reversible with: hermes tools enable browser --platform telegram
+hermes_profile tools disable browser --platform telegram >/dev/null 2>&1 \
+  && ok "built-in browser toolset disabled for telegram (workspace browser is the browser)" \
+  || warn "could not disable the built-in browser toolset for telegram — the agent may bypass the workspace browser (run: $(hermes_profile_text) tools disable browser --platform telegram)"
 
 # ---------------------------------------------------------------- hook
 step "Gateway hook"
 mkdir -p "$HERMES_HOME/hooks"
 install_hook() {
-  local target="$1"
+  target="$1"
   mkdir -p "$target"
   if [ -f "$target/handler.py" ] && cmp -s "$REPO_DIR/hooks/$PLUGIN_NAME/handler.py" "$target/handler.py" \
       && cmp -s "$REPO_DIR/hooks/$PLUGIN_NAME/HOOK.yaml" "$target/HOOK.yaml"; then
@@ -238,6 +425,114 @@ for profile_home in "$HERMES_HOME"/profiles/*/; do
   install_hook "$profile_home/hooks/$PLUGIN_NAME"
 done
 
+# Opt-in Xvfb + localhost x11vnc + noVNC. Packages are never installed here.
+install_desktop_stack() {
+  [ "${DESKTOP_STACK_DONE:-0}" = 1 ] && return 0
+  DESKTOP_STACK_DONE=1
+  step "Desktop stack"
+  if [ "$(id -u)" = 0 ] && [ -z "$DESKTOP_USER" ]; then
+    bad "--desktop-stack as root needs --desktop-user (a non-root account)"
+    return 1
+  fi
+  if [ -z "$DESKTOP_USER" ]; then
+    DESKTOP_USER=$(id -un)
+  fi
+  if ! getent passwd "$DESKTOP_USER" >/dev/null 2>&1; then
+    bad "desktop user $DESKTOP_USER does not exist — create it, then re-run (see docs/intelio-vps.md)"
+    return 1
+  fi
+  if [ "$(id -u)" != 0 ] && [ "$DESKTOP_USER" != "$(id -un)" ]; then
+    bad "only root can install units for $DESKTOP_USER — re-run with sudo"
+    return 1
+  fi
+  _unit_dir="/etc/systemd/system"
+  _sysctl="systemctl"
+  _user_line="User=$DESKTOP_USER"
+  _wanted="multi-user.target"
+  if [ "$(id -u)" != 0 ]; then
+    _unit_dir="$HOME/.config/systemd/user"
+    _sysctl="systemctl --user"
+    _user_line=""
+    _wanted="default.target"
+    mkdir -p "$_unit_dir"
+  fi
+  if [ -z "$VNC_PASSFILE" ]; then
+    if [ "$(id -u)" = 0 ]; then
+      VNC_PASSFILE="/etc/intelio-desktop/vncpasswd"
+    else
+      VNC_PASSFILE="$HOME/.config/intelio/vncpasswd"
+    fi
+  fi
+  _xvfb=$(command -v Xvfb || echo /usr/bin/Xvfb)
+  _x11vnc=$(command -v x11vnc || echo /usr/bin/x11vnc)
+  _websockify=$(command -v websockify || echo /usr/bin/websockify)
+  _novnc_web="/usr/share/novnc"
+  [ -d "$_novnc_web" ] || warn "noVNC web root $_novnc_web is missing (package novnc)"
+  _tpl="$REPO_DIR/deploy"
+  if [ ! -f "$_tpl/intelio-xvfb.service.in" ]; then
+    bad "desktop unit templates missing in $_tpl"
+    return 1
+  fi
+  UNIT_USER_LINE="$_user_line" UNIT_WANTED_BY="$_wanted" \
+    BIN_XVFB="$_xvfb" BIN_X11VNC="$_x11vnc" BIN_WEBSOCKIFY="$_websockify" \
+    NOVNC_WEB="$_novnc_web" NOVNC_BIND="$NOVNC_BIND" VNC_PASSWD_FILE="$VNC_PASSFILE" \
+    python3 - "$_tpl" "$_unit_dir" <<'PY'
+import os, pathlib, sys
+src_dir, dest_dir = sys.argv[1], sys.argv[2]
+repl = {
+    "@USER_LINE@": os.environ.get("UNIT_USER_LINE", ""),
+    "@WANTED_BY@": os.environ["UNIT_WANTED_BY"],
+    "@XVFB@": os.environ["BIN_XVFB"],
+    "@X11VNC@": os.environ["BIN_X11VNC"],
+    "@WEBSOCKIFY@": os.environ["BIN_WEBSOCKIFY"],
+    "@NOVNC_WEB@": os.environ["NOVNC_WEB"],
+    "@NOVNC_BIND@": os.environ["NOVNC_BIND"],
+    "@VNC_PASSWD_FILE@": os.environ["VNC_PASSWD_FILE"],
+}
+for key, value in repl.items():
+    if "\n" in value or "\r" in value:
+        raise SystemExit("refusing newline in unit substitution")
+for name in ("intelio-xvfb", "intelio-x11vnc", "intelio-novnc"):
+    text = pathlib.Path(src_dir, name + ".service.in").read_text()
+    for key, value in repl.items():
+        text = text.replace(key, value)
+    pathlib.Path(dest_dir, name + ".service").write_text(text)
+    print("  ok   wrote %s/%s.service" % (dest_dir, name))
+PY
+  _start_vnc=0
+  if [ -f "$VNC_PASSFILE" ]; then
+    chmod 600 "$VNC_PASSFILE" 2>/dev/null || true
+    if [ "$(id -u)" = 0 ]; then
+      chown "$DESKTOP_USER" "$VNC_PASSFILE" 2>/dev/null || true
+    fi
+    _start_vnc=1
+  else
+    warn "VNC password file missing at $VNC_PASSFILE"
+    warn "create it with: x11vnc -storepasswd $VNC_PASSFILE && chmod 600 $VNC_PASSFILE"
+    warn "x11vnc and noVNC were written but not started (no passwordless VNC)"
+  fi
+  if ! have Xvfb || ! have x11vnc || ! have websockify; then
+    warn "display packages missing — apt-get install xvfb x11vnc websockify novnc"
+    warn "units are installed; start them after the packages are present. See docs/intelio-vps.md"
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  $_sysctl daemon-reload 2>/dev/null || true
+  # shellcheck disable=SC2086
+  $_sysctl enable --now intelio-xvfb.service >/dev/null 2>&1 \
+    && ok "Xvfb enabled on :99" \
+    || warn "could not start intelio-xvfb.service"
+  if [ "$_start_vnc" = 1 ]; then
+    # shellcheck disable=SC2086
+    $_sysctl enable --now intelio-x11vnc.service intelio-novnc.service >/dev/null 2>&1 \
+      && ok "x11vnc (localhost) and noVNC (${NOVNC_BIND}:6080) enabled" \
+      || warn "could not start x11vnc/noVNC — check the password file and binaries"
+  fi
+  if [ "$(id -u)" != 0 ]; then
+    say "  user units stop at logout. For a 24/7 desktop: sudo loginctl enable-linger $DESKTOP_USER"
+  fi
+}
+
 # ------------------------------------------------------- browser host (VPS)
 if [ "$SKIP_BROWSER" = 0 ]; then
   step "VPS browser host"
@@ -246,7 +541,7 @@ if [ "$SKIP_BROWSER" = 0 ]; then
     if [ -d "$DESKTOP_DIR/.git" ]; then
       OLD_LOCK="$(cksum < "$DESKTOP_DIR/desktop/package-lock.json" 2>/dev/null || true)"
       OLD_REV="$(git -C "$DESKTOP_DIR" rev-parse HEAD 2>/dev/null || true)"
-      if git -C "$DESKTOP_DIR" pull --ff-only -q 2>/dev/null; then
+      if update_checkout "$DESKTOP_DIR" "$ALANS_WAY_REF" "$DESKTOP_REPO_URL" 2>/dev/null; then
         if [ "$OLD_REV" != "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" ]; then
           BROWSER_UPDATED=1; ok "updated browser scripts in $DESKTOP_DIR"
           [ "$OLD_LOCK" = "$(cksum < "$DESKTOP_DIR/desktop/package-lock.json")" ] \
@@ -267,8 +562,8 @@ if [ "$SKIP_BROWSER" = 0 ]; then
       cp -R "$SCRIPT_DIR/../hermes-companion/desktop" "$DESKTOP_DIR/" && ok "copied desktop checkout to $DESKTOP_DIR"
     else
       rm -rf "$DESKTOP_DIR.tmp"
-      git clone -q --depth 1 "$DESKTOP_REPO_URL" "$DESKTOP_DIR.tmp" \
-        && mv "$DESKTOP_DIR.tmp" "$DESKTOP_DIR" && ok "cloned companion repo to $DESKTOP_DIR" \
+      clone_pinned "$DESKTOP_REPO_URL" "$DESKTOP_DIR.tmp" "$ALANS_WAY_REF" \
+        && mv "$DESKTOP_DIR.tmp" "$DESKTOP_DIR" && ok "cloned companion repo to $DESKTOP_DIR (${ALANS_WAY_REF:-default branch})" \
         || { rm -rf "$DESKTOP_DIR.tmp"; warn "could not fetch desktop repo — browser host skipped"; }
     fi
   fi
@@ -279,16 +574,41 @@ if [ "$SKIP_BROWSER" = 0 ]; then
   fi
 
   DATA_DIR="${HERMES_VPS_BROWSER_DATA:-$HOME/.local/share/hermes-alans-way/browser}"
+  CHROME_HOME="$HOME"
+  if [ -n "$DESKTOP_USER" ]; then
+    _chrome_home=$(getent passwd "$DESKTOP_USER" 2>/dev/null | cut -d: -f6 || true)
+    if [ -n "$_chrome_home" ]; then
+      CHROME_HOME="$_chrome_home"
+      if [ -z "${HERMES_VPS_BROWSER_DATA:-}" ] && [ "$DO_DESKTOP" = 1 ]; then
+        DATA_DIR="$CHROME_HOME/.local/share/hermes-alans-way/browser"
+      fi
+    fi
+  fi
   mkdir -p "$DATA_DIR" && chmod 700 "$DATA_DIR"
+  if [ "$CHROME_HOME" != "$HOME" ] && [ "$(id -u)" = 0 ]; then
+    chown "$DESKTOP_USER" "$DATA_DIR" 2>/dev/null || true
+  fi
   if [ ! -f "$DATA_DIR/config.json" ]; then
     CHROMIUM="$(command -v chromium || command -v chromium-browser || command -v google-chrome || echo /snap/bin/chromium)"
+    if command -v chromium_user_data_dir >/dev/null 2>&1; then
+      CHROME_PROFILE=$(chromium_user_data_dir "$CHROMIUM" "$CHROME_HOME" "$DATA_DIR/chromium")
+    else
+      case "$CHROMIUM" in
+        */snap/*) CHROME_PROFILE="$CHROME_HOME/snap/chromium/common/hermes-alans-way";;
+        *) CHROME_PROFILE="$DATA_DIR/chromium";;
+      esac
+    fi
+    mkdir -p "$CHROME_PROFILE" && chmod 700 "$CHROME_PROFILE"
+    if [ "$CHROME_HOME" != "$HOME" ] && [ "$(id -u)" = 0 ]; then
+      chown -R "$DESKTOP_USER" "$CHROME_PROFILE" 2>/dev/null || true
+    fi
     cat > "$DATA_DIR/config.json" <<EOF
 {
   "port": 9465,
   "cdpUrl": "http://127.0.0.1:9223",
   "browserCommand": "$CHROMIUM",
   "browserArgs": [
-    "--user-data-dir=$DATA_DIR/chromium",
+    "--user-data-dir=$CHROME_PROFILE",
     "--remote-debugging-port=9223",
     "--remote-debugging-address=127.0.0.1",
     "--no-first-run",
@@ -298,7 +618,7 @@ if [ "$SKIP_BROWSER" = 0 ]; then
 }
 EOF
     chmod 600 "$DATA_DIR/config.json"
-    ok "wrote $DATA_DIR/config.json (chromium: $CHROMIUM)"
+    ok "wrote $DATA_DIR/config.json (chromium: $CHROMIUM, profile: $CHROME_PROFILE)"
   else
     ok "config.json already present"
   fi
@@ -310,13 +630,23 @@ EOF
       UNIT_DIR="$HOME/.config/systemd/user"; SYSCTL="systemctl --user"; UNIT_USER=""
       mkdir -p "$UNIT_DIR"
     fi
+    if [ "$DO_DESKTOP" = 1 ]; then
+      install_desktop_stack || true
+      if [ -n "$DESKTOP_USER" ] && [ "$(id -u)" = 0 ]; then
+        UNIT_USER="User=$DESKTOP_USER"
+      fi
+    fi
+    UNIT_AFTER="network.target"
+    if [ "$DO_DESKTOP" = 1 ]; then
+      UNIT_AFTER="network.target intelio-xvfb.service"
+    fi
     write_unit() { # write_unit <name> <exec> <extra>
       _f="$UNIT_DIR/$1"
       if [ -f "$_f" ]; then return 0; fi
       cat > "$_f" <<EOF
 [Unit]
 Description=Hermes Alan's Way $1
-After=network.target
+After=$UNIT_AFTER
 
 [Service]
 Type=simple
@@ -384,15 +714,20 @@ EOF
 fi
 
 # ------------------------------------------------------------- desktop prereqs (guided)
+if [ "$SKIP_BROWSER" = 1 ] && [ "$DO_DESKTOP" = 1 ] && [ "$SKIP_SERVICES" = 0 ]; then
+  install_desktop_stack || true
+fi
 if [ "$SKIP_BROWSER" = 0 ]; then
   step "Desktop prerequisites (guided)"
-  if have Xvfb || pgrep -f Xvfb >/dev/null 2>&1 || pgrep -f x11vnc >/dev/null 2>&1; then
+  if [ "$DO_DESKTOP" = 1 ]; then
+    ok "desktop stack requested (--desktop-stack); units run as a non-root user"
+  elif have Xvfb || pgrep -f Xvfb >/dev/null 2>&1 || pgrep -f x11vnc >/dev/null 2>&1; then
     ok "an X display stack is present"
   else
-    say "  no Xvfb/x11vnc detected — for the VPS desktop, install a display stack:"
-    say "    apt-get install xvfb x11vnc websockify chromium-browser"
-    say "  then start Xvfb on :99, x11vnc, and a noVNC viewer. The browser services above"
-    say "  expect DISPLAY=:99. Full guide: docs/vps-browser.md in the companion repo."
+    say "  no Xvfb/x11vnc detected — the display stack is guided, never auto-installed."
+    say "    apt-get install xvfb x11vnc websockify novnc"
+    say "  Then re-run with --desktop-stack --desktop-user USER (see docs/intelio-vps.md)."
+    say "  x11vnc stays on localhost; noVNC defaults to 127.0.0.1. Browser units expect DISPLAY=:99."
   fi
 fi
 
@@ -405,6 +740,8 @@ if [ -n "$BOT_ID" ]; then
   set -- --bot-id "$BOT_ID"
   [ -n "$BOT_NAME" ] && set -- "$@" --bot-name "$BOT_NAME"
   [ -n "$MAC_SSH" ] && set -- "$@" --mac-ssh "$MAC_SSH"
+  [ -n "$MAC_MCP" ] && set -- "$@" --mac-mcp-path "$MAC_MCP"
+  [ -n "$MAC_NODE" ] && set -- "$@" --mac-node-path "$MAC_NODE"
   if [ -n "$PROFILE" ]; then set -- "$@" --profile "$PROFILE"
   elif [ -n "$CONFIG" ]; then set -- "$@" --config "$CONFIG"
   else set -- "$@" --config "$HERMES_HOME/config.yaml"; fi

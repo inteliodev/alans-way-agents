@@ -4,6 +4,8 @@
 #
 #   ./setup-workspace.sh --bot-id 123456789 --bot-name Scout \
 #       --mac-ssh me@mymac --router /opt/alans-way/alans-way/scripts/workspace-router.cjs \
+#       --mac-mcp-path ~/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs \
+#       --mac-node-path /opt/homebrew/bin/node \
 #       [--profile alan-local | --config ~/.hermes/config.yaml]
 #
 #   ./setup-workspace.sh --verify --mac-ssh me@mymac [--router PATH] [--profile NAME] [--config CFG]
@@ -18,11 +20,14 @@
 set -eu
 
 BOT_ID="" BOT_NAME="" MAC_SSH="" ROUTER="" CONFIG="" PROFILE="" VERIFY=0
+MAC_MCP="" MAC_NODE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --bot-id) BOT_ID="$2"; shift 2;;
     --bot-name) BOT_NAME="$2"; shift 2;;
     --mac-ssh) MAC_SSH="$2"; shift 2;;
+    --mac-mcp-path) MAC_MCP="$2"; shift 2;;
+    --mac-node-path) MAC_NODE="$2"; shift 2;;
     --router) ROUTER="$2"; shift 2;;
     --config) CONFIG="$2"; shift 2;;
     --profile) PROFILE="$2"; shift 2;;
@@ -146,6 +151,15 @@ block() {
   if [ -n "$BOT_NAME" ]; then
     BOT_NAME_BLOCK="$(printf '\n      - --bot-name\n      - %s' "$(yaml_quote "$BOT_NAME")")"
   fi
+  # SSH sessions on the Mac do not load Homebrew's PATH. These are omitted
+  # when unset so discovery and the app bundle's own runtime still apply.
+  MAC_ENV_BLOCK=""
+  if [ -n "$MAC_MCP" ]; then
+    MAC_ENV_BLOCK="$(printf '\n      HERMES_WORKSPACE_MAC_MCP: %s' "$(yaml_quote "$MAC_MCP")")"
+  fi
+  if [ -n "$MAC_NODE" ]; then
+    MAC_ENV_BLOCK="$(printf '%s\n      HERMES_WORKSPACE_MAC_NODE: %s' "$MAC_ENV_BLOCK" "$(yaml_quote "$MAC_NODE")")"
+  fi
   cat <<EOF
 $MARK_BEGIN
   workspace_browser:
@@ -158,7 +172,7 @@ $MARK_BEGIN
     connect_timeout: 12
     timeout: $TOOL_TIMEOUT
     env:
-      HERMES_WORKSPACE_MAC_SSH: $(yaml_quote "${MAC_SSH:-}")
+      HERMES_WORKSPACE_MAC_SSH: $(yaml_quote "${MAC_SSH:-}")$MAC_ENV_BLOCK
 $MARK_END
 EOF
 }

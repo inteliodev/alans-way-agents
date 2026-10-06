@@ -14,8 +14,9 @@ Set up Alan's Way on this machine and connect it to my Mac.
 1. If Tailscale isn't installed or connected here, install it
    (tailscaled + `tailscale up`). Tell me the tailnet name/IP of this machine
    when done. My Mac's Tailscale address is: __MY_MAC_TAILSCALE__
-2. Fetch the bootstrap:  git clone https://github.com/capthvnsen/alans-way-agents
-   (or `git -C alans-way-agents pull` if it's already cloned)
+2. Fetch the bootstrap:  git clone https://github.com/inteliodev/alans-way-agents
+   (or `git -C alans-way-agents pull` if it's already cloned). This is the
+   Intelio fork of capthvnsen's alans-way-agents.
 3. Run:  ./alans-way-agents/setup.sh --bot-id __MY_TELEGRAM_BOT_ID__ \
        --mac-ssh me@__MY_MAC_TAILSCALE__ --restart
    Answer its prompts; if it asks to bind a primary route, pick the bot

@@ -1,0 +1,17 @@
+[Unit]
+Description=Intelio x11vnc on localhost only
+After=intelio-xvfb.service
+Requires=intelio-xvfb.service
+
+[Service]
+Type=simple
+@USER_LINE@
+Environment=DISPLAY=:99
+# -localhost refuses non-loopback VNC clients. -rfbauth requires a password
+# file created with `x11vnc -storepasswd`. Do not drop -rfbauth.
+ExecStart=@X11VNC@ -display :99 -localhost -rfbport 5900 -rfbauth @VNC_PASSWD_FILE@ -forever -shared -noxdamage
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=@WANTED_BY@
