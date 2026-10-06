@@ -92,9 +92,18 @@ binds its own UDP 41641, and ufw blocks inbound there.
 - `plugins.entries.alans-way.allow_gateway_injection: true`. Proactivity stays
   paused until someone explicitly resumes it.
 - Model: provider `openai-codex` (ChatGPT/Codex subscription via OAuth, no API
-  key), model `gpt-6-sol`. The OAuth credential lives in the profile's
-  `auth.json`. Never commit it. Log in with
-  `hermes -p intelio auth add openai-codex --type oauth --no-browser` (device code).
+  key), model `gpt-6-sol`. Verified 2026-10-05: a CLI test turn answered `OK`, and
+  the bot answered Hayden's first Telegram message.
+- The Codex OAuth credential lives in the **root** store `~/.hermes/auth.json`
+  (credential pool `openai-codex`, label `intelio-vps`), not in the profile.
+  Profile `intelio` reads it through Hermes' global-root fallback, and refresh
+  rotations write back to root. Never commit `auth.json`.
+- To log in again, run the device-code login **without `-p`**:
+  `hermes auth add openai-codex --type oauth --no-browser --label intelio-vps`.
+  See "Codex credential is dropped in a named profile" below for why
+  `hermes -p intelio auth add …` must not be used at this Hermes pin.
+- `~/.codex/auth.json` (a copy of a Codex CLI login) was stale and was moved
+  to `~/.codex/auth.json.stale-june`. Hermes keeps its own Codex session.
 - Only one Telegram poller may use the bot token. Do not run the bot on the
   Mac at the same time.
 
@@ -120,6 +129,30 @@ sudo ss -tlnp                                  # expect only :22 on 0.0.0.0/[::]
 
 ## Known gaps found during this install
 
+### Codex credential is dropped in a named profile (Hermes 5d3c059)
+
+**Symptom.** `hermes -p intelio auth add openai-codex --type oauth` prints
+`Added openai-codex OAuth credential #1` and exits 0. But the profile's
+`auth.json` has no `credential_pool`, and chat fails with
+"No Codex credentials stored".
+
+**Root cause** (`agent/credential_pool.py`, `persist_pool_entries`):
+- `openai-codex` is in `SINGLE_USE_REFRESH_POOL_PROVIDERS`.
+- A named profile with no local rows for it counts as "borrowing", so the
+  write goes to `_update_root_pool_rows()` on the root `~/.hermes/auth.json`.
+- That function only updates rows that already exist. When the root has no
+  `openai-codex` rows, nothing is written and the new credential is lost.
+- `CredentialPool.add_entry()` handles a profile claiming its own credential
+  only when root rows were borrowed (`_borrowed_root_ids`).
+- The only write that does land is `mark_provider_active_if_unset()`, which
+  sets `active_provider`.
+
+**Workaround.** Run the login in the root home (no `-p`), so the row is
+written by `write_credential_pool` to `~/.hermes/auth.json`, and let the
+profile borrow it. Report the bug upstream before moving the Hermes pin.
+
+### Plugin and gateway
+
 - `setup.sh --profile NAME` installs and enables the plugin only in the default
   Hermes home. Hermes profiles keep separate plugin directories, so the plugin
   was also installed with `hermes -p intelio plugins install …` and
@@ -127,7 +160,16 @@ sudo ss -tlnp                                  # expect only :22 on 0.0.0.0/[::]
   again afterwards.
 - `hermes -p NAME gateway install` is refused at Hermes 5d3c059 (one host
   gateway per host), so `hermes gateway install` from the default profile is
-  used instead.
+  used instead. That host gateway keeps the routing index for every profile in
+  the root `~/.hermes/sessions/sessions.json`.
+- **Proactivity bind.** The plugin's `bind` only accepts a route listed in the
+  profile's own `sessions/sessions.json`. Under the host gateway that index is
+  the root's. So `setup.sh --bind --profile intelio` bound Hayden's
+  `agent:intelio:telegram:dm:…` route in the default home (quiet hours
+  America/Chicago), while `hermes -p intelio proactivity bind` is refused and
+  `setup.sh --verify --profile intelio` warns "no primary route bound".
+  Proactivity is paused either way. Fixing this needs plugin support for the
+  multiplexed index.
 - The router has no non-root default for the VPS connector path. The `/opt`
   symlink above covers it.
 
@@ -135,5 +177,6 @@ sudo ss -tlnp                                  # expect only :22 on 0.0.0.0/[::]
 
 - Mac SSH link over Tailscale (runbook sections 1–2). The Mac was offline in
   the tailnet at install time.
-- `setup.sh --bind --profile intelio`, once Hayden's Telegram DM session exists.
+- Proactivity: profile-scoped bind (see above) and an explicit
+  `/proactivity resume` if Hayden wants the bot to message first.
 - Decision on the `terminal` and `computer_use` toolsets for Telegram.
