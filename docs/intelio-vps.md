@@ -250,6 +250,31 @@ not turn off the VNC password. If the page loads from a network that is not
 the tailnet, the bind address is wrong — stop the unit and fix it before
 using the desktop.
 
+## 8. Verify
+
+On the VPS, after a real install:
+
+```sh
+./setup.sh --verify
+./setup-workspace.sh --verify --mac-ssh intelio@YOUR_MAC_TAILSCALE_NAME --profile YOUR_PROFILE
+```
+
+`--verify` changes nothing. Expect:
+
+- plugin `alans-way` installed
+- gateway hook present
+- `proactivity` enabled for Telegram on the selected profile, built-in `browser` toolset disabled
+- managed `workspace_browser` block in that profile's `config.yaml`
+- browser host connection file when the VPS browser is running
+
+Then, with the Mac awake: `ssh -o BatchMode=yes intelio@YOUR_MAC_TAILSCALE_NAME true`
+and a router probe (`node alans-way/scripts/workspace-router.cjs --probe` with
+`HERMES_WORKSPACE_MAC_SSH` set) should report `mac:`. With the Mac asleep it
+reports the VPS fallback, which is expected.
+
+In Telegram, `/proactivity status` should show the route bound only after you
+bind one. Binding and turning proactivity on stay explicit prompts.
+
 ## 9. One Hermes: clean fork and upstream sync
 
 The VPS is the single Hermes brain. The Mac app, Telegram and the phone are
@@ -336,31 +361,6 @@ curl -s -o /dev/null -w '%{http_code}\n' http://100.111.128.12:8642/p/intelio/ap
 ```
 
 From outside the tailnet `http://<public-ip>:8642` must not connect.
-
-## 8. Verify
-
-On the VPS, after a real install:
-
-```sh
-./setup.sh --verify
-./setup-workspace.sh --verify --mac-ssh intelio@YOUR_MAC_TAILSCALE_NAME --profile YOUR_PROFILE
-```
-
-`--verify` changes nothing. Expect:
-
-- plugin `alans-way` installed
-- gateway hook present
-- `proactivity` enabled for Telegram on the selected profile, built-in `browser` toolset disabled
-- managed `workspace_browser` block in that profile's `config.yaml`
-- browser host connection file when the VPS browser is running
-
-Then, with the Mac awake: `ssh -o BatchMode=yes intelio@YOUR_MAC_TAILSCALE_NAME true`
-and a router probe (`node alans-way/scripts/workspace-router.cjs --probe` with
-`HERMES_WORKSPACE_MAC_SSH` set) should report `mac:`. With the Mac asleep it
-reports the VPS fallback, which is expected.
-
-In Telegram, `/proactivity status` should show the route bound only after you
-bind one. Binding and turning proactivity on stay explicit prompts.
 
 ## What this repo cannot prove
 
