@@ -1,6 +1,6 @@
 name: alans-way
-version: "0.4.1"
-description: "Alan's Way agent side: a designated proactive primary plus the workspace-browser skill and router scripts for the Hermes desktop companion."
+version: "0.5.0"
+description: "Alan's Way agent side: a designated proactive primary, the workspace-browser skill and router, and drafts-only iMessage via BlueBubbles."
 author: "capthvnsen, Hermes Agent"
 license: MIT
 homepage: "https://github.com/inteliodev/alans-way-agents"
@@ -9,5 +9,11 @@ tags:
   - proactivity
   - orchestrator
   - workspace
+  - imessage
 provides_tools:
   - proactive_control
+  - imessage_list_chats
+  - imessage_read_chat
+  - imessage_search
+  - imessage_draft_reply
+  - imessage_send_draft

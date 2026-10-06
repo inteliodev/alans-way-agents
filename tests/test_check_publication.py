@@ -33,6 +33,11 @@ class PublicationTests(unittest.TestCase):
         address = ".".join(["0", "0", "0", "0"])
         self.assertEqual(self.scan("docs/intelio-vps.md", "listens on %s:631" % address), [])
 
+    def test_the_vps_runbook_may_record_its_own_tailnet_addresses(self):
+        address = ".".join(["100", "102", "67", "114"])
+        self.assertEqual(self.scan("docs/intelio-vps.md", "http://%s:1234" % address), [])
+        self.assertTrue(self.scan("README.md", address))
+
     def test_credentials_are_denied_without_printing_the_value(self):
         key = "ghp_" + "a" * 36
         findings = self.scan("config.txt", key)

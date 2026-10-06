@@ -362,10 +362,99 @@ curl -s -o /dev/null -w '%{http_code}\n' http://100.111.128.12:8642/p/intelio/ap
 
 From outside the tailnet `http://<public-ip>:8642` must not connect.
 
+## 11. Drafts-only iMessage (BlueBubbles on the Mac)
+
+Hayden's personal iMessage stays on the MacBook. A BlueBubbles server there
+answers the VPS over Tailscale only. Profile `intelio` (Hermes v0.21.5, pin
+`5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`) gets plugin tools that call the
+REST API. Do **not** enable Hermes' built-in `bluebubbles` gateway platform.
+That adapter makes the Mac's Apple ID the bot identity and auto-replies to
+incoming texts from his contacts.
+
+The tools list chats, read one chat, search, and store a pending draft under
+`~/.hermes/profiles/intelio/imessage/drafts/`. `imessage_send_draft` sends one
+stored draft, exactly as stored, and only after Hermes' native approval gate
+(`tools.approval.request_tool_approval`, the same Approve/Deny card as a
+dangerous command). The card shows the recipient and the full text. Silence
+uses `approvals.timeout` and does not send. There is no free-form send tool.
+Yolo and `approvals.mode: off` do not send either. Every send attempt is
+appended to `~/.hermes/profiles/intelio/imessage/sends.jsonl`.
+
+### Mac
+
+On the MacBook (the one at tailnet address `100.102.67.114`):
+
+```sh
+./scripts/mac-bluebubbles-setup.sh
+```
+
+That script is idempotent. It runs `brew install --cask bluebubbles` when the
+cask is missing, sets `sudo pmset -c sleep 0` and `sudo pmset -c disksleep 0`
+so the machine stays awake on AC power, and opens BlueBubbles. Closing the
+lid still sleeps the Mac unless it is in clamshell mode: power adapter plus
+an external display.
+
+Then, in the GUI:
+
+1. Sign in to Messages on that Mac with Hayden's Apple ID.
+2. Grant BlueBubbles Full Disk Access and Accessibility
+   (System Settings → Privacy & Security).
+3. Set a server password. Put that same value in the profile `.env` below.
+   Do not commit it.
+4. Disable the cloud proxy, ngrok, and any Cloudflare/Dynamic-DNS tunnel.
+   The server is LAN/Tailscale only. Nothing should publish port 1234 off
+   the tailnet.
+5. Leave the server on the default port 1234.
+
+From the VPS, `curl -s -o /dev/null -w '%{http_code}\n' http://100.102.67.114:1234/api/v1/ping`
+should connect. From a network that is not the tailnet, that address must
+not answer.
+
+### VPS
+
+In `~/.hermes/profiles/intelio/.env` (mode 600, never echoed):
+
+```sh
+BLUEBUBBLES_URL=http://100.102.67.114:1234
+BLUEBUBBLES_PASSWORD=<the server password>
+```
+
+The plugin refuses any URL that is not loopback or a `100.64.0.0/10` tailnet
+address. Then enable the plugin toolset for Telegram and restart the gateway.
+Do not add a `bluebubbles:` platform:
+
+```sh
+hermes -p intelio tools enable imessage --platform telegram
+systemctl --user restart hermes-gateway.service
+```
+
+Confirm the platform is absent:
+
+```sh
+grep -n 'bluebubbles' ~/.hermes/profiles/intelio/config.yaml || echo "no bluebubbles platform"
+```
+
+### Check
+
+1. Ask in Telegram for recent chats. The reply lists display names and does
+   not send anything.
+2. Ask for a draft to one of those chats. The reply shows the draft id,
+   recipient, and full text, and the file under `imessage/drafts/` has
+   `"status": "pending"`.
+3. Ask to send that draft. Telegram (or the app) shows Approve/Deny with the
+   recipient and the full text. Deny, or wait out `approvals.timeout`: the
+   draft stays pending and `sends.jsonl` records `denied` or `timeout`.
+4. Ask again and approve once. One message leaves, matching the stored text.
+   The draft status becomes `sent`. A second send of that id does nothing.
+5. Changing the wording means a new draft. The old text is what an earlier
+   approval covered.
+
 ## What this repo cannot prove
 
 A passing `--verify` here does not show that the Hostinger firewall panel only
 has port 22, that the phone can open noVNC, that snap Chromium actually paints
 on `:99`, that `snap stop --disable cups` left nothing listening on port 631,
 that Telegram is not also polling on the Mac, that the Hermes API server is
-reachable only on the tailnet, or that the Mac account is non-admin. Those are checked on the VPS, the Mac, and the phone.
+reachable only on the tailnet, that BlueBubbles answers only on the tailnet
+and the approval card actually blocks a send, or that the Mac account is
+non-admin. Those are checked on the VPS, the Mac, and the phone.
