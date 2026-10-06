@@ -29,6 +29,10 @@ class PublicationTests(unittest.TestCase):
         self.assertTrue(self.scan("README.md", address))
         self.assertEqual(self.scan("tests/test_local.py", "127.0.0.1"), [])
 
+    def test_unspecified_addresses_are_allowed(self):
+        address = ".".join(["0", "0", "0", "0"])
+        self.assertEqual(self.scan("docs/intelio-vps.md", "listens on %s:631" % address), [])
+
     def test_credentials_are_denied_without_printing_the_value(self):
         key = "ghp_" + "a" * 36
         findings = self.scan("config.txt", key)

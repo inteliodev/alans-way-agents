@@ -26,11 +26,21 @@ def unspecified_v4():
 
 
 class ChromiumProfileTests(unittest.TestCase):
-    def profile(self, binary, home="/home/user", fallback="/tmp/fallback"):
-        result = subprocess.run(
-            [SH, str(PROFILE), "--print", binary, home, fallback],
-            capture_output=True, text=True, check=True)
-        return result.stdout.strip()
+    def profile(self, binary, home="/home/user", fallback="/tmp/fallback", snap_rc=1):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            bindir = Path(directory)
+            snap = bindir / "snap"
+            snap.write_text("#!/bin/sh\nexit %d\n" % snap_rc)
+            snap.chmod(0o755)
+            env = dict(os.environ)
+            # The stub hides a host `snap` so apt Chromium is not rewritten
+            # just because this machine has the Chromium snap installed.
+            env["PATH"] = str(bindir) + ":" + env.get("PATH", "/usr/bin:/bin")
+            result = subprocess.run(
+                [SH, str(PROFILE), "--print", binary, home, fallback],
+                capture_output=True, text=True, check=True, env=env)
+            return result.stdout.strip()
 
     def test_snap_profile_lives_in_the_desktop_users_common_dir(self):
         self.assertEqual(
@@ -50,8 +60,36 @@ class ChromiumProfileTests(unittest.TestCase):
                 self.profile(str(link)),
                 "/home/user/snap/chromium/common/hermes-alans-way")
 
+    def test_snap_wrapper_is_detected_before_realpath(self):
+        # Ubuntu: /snap/bin/chromium -> /usr/bin/snap. The resolved path does
+        # not contain /snap/, so the original path has to win.
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snap_bin = root / "snap" / "bin"
+            snap_bin.mkdir(parents=True)
+            usr_bin = root / "usr" / "bin"
+            usr_bin.mkdir(parents=True)
+            real = usr_bin / "snap"
+            real.write_text("#!/bin/sh\n")
+            link = snap_bin / "chromium"
+            link.symlink_to(real)
+            resolved = os.path.realpath(link)
+            self.assertNotIn("/snap/", resolved)
+            self.assertEqual(
+                self.profile(str(link)),
+                "/home/user/snap/chromium/common/hermes-alans-way")
+
+    def test_snap_list_selects_the_confined_profile(self):
+        self.assertEqual(
+            self.profile("/usr/bin/chromium", snap_rc=0),
+            "/home/user/snap/chromium/common/hermes-alans-way")
+
     def test_non_snap_keeps_the_private_data_dir(self):
         self.assertEqual(self.profile("/usr/bin/chromium"), "/tmp/fallback")
+
+    def test_google_chrome_is_not_rewritten_when_snap_chromium_exists(self):
+        self.assertEqual(self.profile("/usr/bin/google-chrome", snap_rc=0), "/tmp/fallback")
 
 
 class NovncBindTests(unittest.TestCase):
@@ -130,6 +168,91 @@ class SetupDryRunTests(unittest.TestCase):
         result = self.run_setup("--dry-run", "--profile", "bad/name")
         self.assertEqual(result.returncode, 2)
         self.assertIn("bad --profile", result.stderr)
+
+    def test_desktop_stack_dry_run_mentions_cups(self):
+        result = self.run_setup("--dry-run", "--desktop-stack", "--non-interactive")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("snap stop --disable cups", result.stdout)
+
+
+class VerifyToolsetTests(unittest.TestCase):
+    def verify(self, config):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "hermes"
+            home.mkdir()
+            (home / "config.yaml").write_text(config)
+            env = dict(os.environ)
+            env["HOME"] = directory
+            return subprocess.run(
+                [SH, str(SETUP), "--verify", "--non-interactive", "--hermes-home", str(home)],
+                capture_output=True, text=True, env=env)
+
+    def test_flow_list_without_browser_is_not_a_false_warning(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram: [web, terminal, file, todo]\n"
+            "agent:\n"
+            "  disabled_toolsets:\n"
+            "    - browser\n")
+        self.assertIn("built-in browser toolset disabled for telegram", result.stdout)
+        self.assertNotIn("still enabled", result.stdout)
+
+    def test_flow_list_with_browser_warns(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram: [browser, terminal]\n")
+        self.assertIn("built-in 'browser' toolset still enabled", result.stdout)
+
+    def test_block_list_with_browser_warns(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram:\n"
+            "    - browser\n"
+            "    - terminal\n")
+        self.assertIn("built-in 'browser' toolset still enabled", result.stdout)
+
+    def test_block_list_ignores_a_later_browser_item(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram:\n"
+            "    - web\n"
+            "    - terminal\n"
+            "agent:\n"
+            "  disabled_toolsets:\n"
+            "    - browser\n")
+        self.assertIn("built-in browser toolset disabled for telegram", result.stdout)
+        self.assertNotIn("still enabled", result.stdout)
+
+    def test_two_space_block_items_count(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram:\n"
+            "  - browser\n"
+            "  discord:\n"
+            "  - terminal\n")
+        self.assertIn("built-in 'browser' toolset still enabled", result.stdout)
+
+    def test_bundle_name_is_not_treated_as_the_browser_toolset(self):
+        result = self.verify(
+            "platform_toolsets:\n"
+            "  telegram: [hermes-telegram]\n"
+            "agent:\n"
+            "  disabled_toolsets:\n"
+            "    - browser\n")
+        self.assertIn("built-in browser toolset disabled for telegram", result.stdout)
+        self.assertNotIn("still enabled", result.stdout)
+
+    def test_flow_list_and_string_form_see_proactivity(self):
+        flow = self.verify(
+            "platform_toolsets:\n"
+            "  telegram: [proactivity, terminal]\n")
+        quoted = self.verify(
+            "platform_toolsets:\n"
+            "  telegram: '[\"proactivity\", \"terminal\"]'\n")
+        for result in (flow, quoted):
+            self.assertIn("proactivity toolset enabled for telegram", result.stdout)
+            self.assertIn("built-in browser toolset disabled for telegram", result.stdout)
 
 
 if __name__ == "__main__":

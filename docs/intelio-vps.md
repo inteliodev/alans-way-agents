@@ -175,21 +175,33 @@ closed in the Hostinger firewall either way.
 
 ### Snap Chromium profile
 
-Snap Chromium cannot use an arbitrary `--user-data-dir`. The desktop docs
-require a path inside the snap's permitted directory. When the Chromium binary
-resolves under `/snap/`, `setup.sh` sets:
+Snap Chromium cannot use an arbitrary `--user-data-dir`. On Ubuntu,
+`/snap/bin/chromium` is a symlink to `/usr/bin/snap`, so resolving the path
+first hides the snap. `setup.sh` detects snap from the original path
+(`/snap/bin/*`) or from `snap list chromium` before resolving, and sets the
+profile to the desktop user's snap common directory:
 
 ```text
 /home/user/snap/chromium/common/hermes-alans-way
 ```
 
-using the desktop user's home, not `/root/snap`. The stock `browser_exec`
+That home is the desktop user's, not `/root/snap`. The stock `browser_exec`
 profile (`deploy/browser-exec-config.json`) is a different Chromium on port
 9222 and must not share this directory or port 9223. Non-snap Chromium keeps
 the profile under the private browser data directory
 (`~/.local/share/hermes-alans-way/browser/chromium`).
 
 The browser units run as the same desktop user as Xvfb, with `DISPLAY=:99`.
+
+Installing the Chromium snap also installs the cups snap, which listens on
+0.0.0.0:631. Stop it so the VPS does not serve CUPS on every interface:
+
+```sh
+sudo snap stop --disable cups
+```
+
+`./setup.sh --desktop-stack` runs `snap stop --disable cups` when it is root
+and the cups snap is installed. Otherwise it prints the same command.
 
 ## 6. Mac browser paths
 
@@ -267,5 +279,6 @@ bind one. Binding and turning proactivity on stay explicit prompts.
 
 A passing `--verify` here does not show that the Hostinger firewall panel only
 has port 22, that the phone can open noVNC, that snap Chromium actually paints
-on `:99`, that Telegram is not also polling on the Mac, or that the Mac
-account is non-admin. Those are checked on the VPS, the Mac, and the phone.
+on `:99`, that `snap stop --disable cups` left nothing listening on port 631,
+that Telegram is not also polling on the Mac, or that the Mac account is
+non-admin. Those are checked on the VPS, the Mac, and the phone.

@@ -202,6 +202,20 @@ hermes_profile_text() {
   fi
 }
 
+# Hermes 5d3c059 writes platform_toolsets as a flow list
+# (`telegram: [web, terminal]`). Older files use a block list. Both are read
+# here; a later `- browser` outside the telegram entry does not count.
+toolset_enabled() { # toolset_enabled <config.yaml> <name>
+  _checker=""
+  if [ -n "${REPO_DIR:-}" ] && [ -f "$REPO_DIR/scripts/platform_toolsets.py" ]; then
+    _checker="$REPO_DIR/scripts/platform_toolsets.py"
+  elif [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/scripts/platform_toolsets.py" ]; then
+    _checker="$SCRIPT_DIR/scripts/platform_toolsets.py"
+  fi
+  [ -n "$_checker" ] || return 1
+  python3 "$_checker" "$1" telegram "$2"
+}
+
 novnc_bind_ok() {
   _checker=""
   if [ -n "${REPO_DIR:-}" ] && [ -f "$REPO_DIR/scripts/novnc_bind.py" ]; then
@@ -264,6 +278,7 @@ if [ "$DRY_RUN" = 1 ]; then
     say "  desktop units: intelio-xvfb.service intelio-x11vnc.service intelio-novnc.service"
     say "  x11vnc binds localhost only; novnc bind: $NOVNC_BIND"
     say "  desktop user: ${DESKTOP_USER:-<current user, or required when root>}"
+    say "  if the cups snap is installed: snap stop --disable cups"
     if command -v chromium >/dev/null 2>&1 && command -v chromium_user_data_dir >/dev/null 2>&1; then
       _chrome=$(command -v chromium || true)
       _home="$HOME"
@@ -287,12 +302,12 @@ if [ "$VERIFY" = 1 ]; then
     && ok "plugin '$PLUGIN_NAME' installed" || bad "plugin '$PLUGIN_NAME' not in hermes plugins list"
   CFG_HOME="${PROFILE:+$HERMES_HOME/profiles/$PROFILE}"; CFG_HOME="${CFG_HOME:-$HERMES_HOME}"
   if [ -f "$CFG_HOME/config.yaml" ]; then
-    if awk '/^platform_toolsets:/{p=1;next} p&&/^  telegram:/{t=1;next} p&&/^  [a-z_]+:/{t=0} t&&/^    - proactivity[[:space:]]*$/{f=1} END{exit !f}' "$CFG_HOME/config.yaml"; then
+    if toolset_enabled "$CFG_HOME/config.yaml" proactivity; then
       ok "proactivity toolset enabled for telegram"
     else
       warn "proactivity toolset not enabled for telegram — proactive_control won't be callable in Telegram sessions (run: $(hermes_profile_text) tools enable proactivity --platform telegram)"
     fi
-    if awk '/^platform_toolsets:/{p=1;next} p&&/^  telegram:/{t=1;next} p&&/^  [a-z_]+:/{t=0} t&&/^    - browser[[:space:]]*$/{f=1} END{exit !f}' "$CFG_HOME/config.yaml"; then
+    if toolset_enabled "$CFG_HOME/config.yaml" browser; then
       warn "built-in 'browser' toolset still enabled for telegram — the agent may bypass the workspace browser (run: $(hermes_profile_text) tools disable browser --platform telegram)"
     else
       ok "built-in browser toolset disabled for telegram"
@@ -444,6 +459,18 @@ install_desktop_stack() {
   if [ "$(id -u)" != 0 ] && [ "$DESKTOP_USER" != "$(id -un)" ]; then
     bad "only root can install units for $DESKTOP_USER — re-run with sudo"
     return 1
+  fi
+  # The Chromium snap pulls in cups, which listens on every interface.
+  if command -v snap >/dev/null 2>&1 && snap list cups >/dev/null 2>&1; then
+    if [ "$(id -u)" = 0 ]; then
+      if snap stop --disable cups >/dev/null 2>&1; then
+        ok "disabled the cups snap"
+      else
+        warn "could not disable the cups snap — run: snap stop --disable cups"
+      fi
+    else
+      warn "cups snap is installed — run: sudo snap stop --disable cups"
+    fi
   fi
   _unit_dir="/etc/systemd/system"
   _sysctl="systemctl"
