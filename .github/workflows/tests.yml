@@ -10,4 +10,4 @@ jobs:
           python-version: "3.11"
       - run: python -m unittest discover -s tests
       - run: python scripts/check_publication.py
-      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh
+      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh

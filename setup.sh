@@ -38,7 +38,7 @@ BOT_ID="" BOT_NAME="" MAC_SSH="" PROFILE="" CONFIG="" TIMEZONE=""
 HERMES_HOME="" DESKTOP_DIR="" MAC_MCP="" MAC_NODE=""
 DESKTOP_USER="" NOVNC_BIND="127.0.0.1" VNC_PASSFILE=""
 SKIP_BROWSER=0 SKIP_SERVICES=0 DO_BIND=0 DO_RESTART=0 NON_INTERACTIVE=0 VERIFY=0
-DO_DESKTOP=0 DRY_RUN=0 NOVNC_BIND_SET=0
+DO_DESKTOP=0 DRY_RUN=0 NOVNC_BIND_SET=0 PLUGIN_RESTART_REQUIRED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -242,6 +242,10 @@ if [ -f "${REPO_DIR:-$SCRIPT_DIR}/scripts/chromium-profile.sh" ]; then
   # shellcheck disable=SC1091
   . "${REPO_DIR:-$SCRIPT_DIR}/scripts/chromium-profile.sh"
 fi
+if [ -f "${REPO_DIR:-$SCRIPT_DIR}/scripts/hermes-compat.sh" ]; then
+  # shellcheck disable=SC1091
+  . "${REPO_DIR:-$SCRIPT_DIR}/scripts/hermes-compat.sh"
+fi
 
 if [ "$DO_DESKTOP" = 1 ] || [ "$NOVNC_BIND_SET" = 1 ]; then
   if ! novnc_bind_ok "$NOVNC_BIND"; then
@@ -364,6 +368,13 @@ if [ -z "$REPO_DIR" ]; then
     # shellcheck disable=SC1091
     . "$REPO_DIR/scripts/chromium-profile.sh"
   fi
+  if [ -f "$REPO_DIR/scripts/hermes-compat.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$REPO_DIR/scripts/hermes-compat.sh"
+  else
+    bad "missing $REPO_DIR/scripts/hermes-compat.sh — checkout is older than this setup.sh"
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------- telegram
@@ -392,9 +403,15 @@ if hermes plugins list 2>/dev/null | grep -q "$PLUGIN_NAME"; then
   if diff -rq -x __pycache__ "$REPO_DIR/$PLUGIN_NAME" "$HERMES_HOME/plugins/$PLUGIN_NAME" >/dev/null 2>&1; then
     ok "plugin already installed and current"
   else
-    hermes plugins install --force "file://$REPO_DIR#$PLUGIN_NAME" >/dev/null 2>&1 \
-      && ok "plugin updated from $REPO_DIR (restart the gateway to load it)" \
-      || warn "could not update the installed plugin — run: hermes plugins install --force file://$REPO_DIR#$PLUGIN_NAME"
+    # Hermes output stays visible: a refusal (e.g. the live-gateway guard)
+    # must not leave a re-run silently on the old plugin code.
+    if hermes_plugin_reinstall "file://$REPO_DIR#$PLUGIN_NAME"; then
+      ok "plugin updated from $REPO_DIR"
+      [ "$HERMES_PLUGIN_RESTART_REQUIRED" = 1 ] && PLUGIN_RESTART_REQUIRED=1
+    else
+      bad "could not update the installed plugin — the gateway still runs the old code. Stop the gateway (hermes gateway stop), then run: hermes plugins install --force file://$REPO_DIR#$PLUGIN_NAME"
+      exit 1
+    fi
   fi
 else
   hermes plugins install "file://$REPO_DIR#$PLUGIN_NAME" && ok "plugin installed from $REPO_DIR" \
@@ -780,7 +797,13 @@ fi
 # ------------------------------------------------------------- gateway restart
 step "Gateway restart"
 GW_HINT="A running gateway holds already-imported code — restart it to load the plugin."
-if [ "$DO_RESTART" = 1 ] || { [ "$NON_INTERACTIVE" = 0 ] && [ -r /dev/tty ] && confirm "  Restart the Hermes gateway now?"; }; then
+# A plugin replaced under a live gateway (or with the gateway stopped for the
+# install) must be restarted now, not left to the operator.
+if [ "$PLUGIN_RESTART_REQUIRED" = 1 ]; then
+  say "  the plugin was replaced while a gateway was live — restarting it"
+fi
+if [ "$DO_RESTART" = 1 ] || [ "$PLUGIN_RESTART_REQUIRED" = 1 ] \
+    || { [ "$NON_INTERACTIVE" = 0 ] && [ -r /dev/tty ] && confirm "  Restart the Hermes gateway now?"; }; then
   if hermes gateway restart >/dev/null 2>&1; then
     ok "hermes gateway restart"
   elif systemctl is-active --quiet hermes-gateway 2>/dev/null; then
@@ -788,7 +811,13 @@ if [ "$DO_RESTART" = 1 ] || { [ "$NON_INTERACTIVE" = 0 ] && [ -r /dev/tty ] && c
   elif systemctl --user is-active --quiet hermes-gateway 2>/dev/null; then
     systemctl --user restart hermes-gateway && ok "systemctl --user restart hermes-gateway"
   elif pgrep -f "gateway run" >/dev/null 2>&1; then
-    warn "a supervisor-managed gateway is running — restart it through its owner (PM/launchd), not here"
+    if [ "$PLUGIN_RESTART_REQUIRED" = 1 ]; then
+      bad "a supervisor-managed gateway is running the replaced plugin — restart it through its owner (PM/launchd) now"
+    else
+      warn "a supervisor-managed gateway is running — restart it through its owner (PM/launchd), not here"
+    fi
+  elif [ "$PLUGIN_RESTART_REQUIRED" = 1 ]; then
+    bad "could not restart the gateway after the plugin update — start it with: hermes gateway start"
   else
     warn "no live gateway found — $GW_HINT"
   fi
