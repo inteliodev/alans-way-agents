@@ -155,7 +155,49 @@ class SetupDryRunTests(unittest.TestCase):
         self.assertIn("intelio-x11vnc.service", result.stdout)
         self.assertIn("intelio-novnc.service", result.stdout)
         self.assertIn("novnc bind: 127.0.0.1", result.stdout)
-        self.assertIn("snap/chromium/common/hermes-alans-way", result.stdout)
+        # The profile line depends on the host: no chromium on PATH prints the
+        # snap placeholder; a chromium binary prints the path the script chose
+        # (CI runners have apt chromium, so ~/.local/share). Both are covered
+        # deterministically by the stubbed-chromium tests below.
+        self.assertTrue(
+            "snap Chromium profile: <desktop-home>/snap/chromium/common/hermes-alans-way" in result.stdout
+            or "chromium user-data-dir: /" in result.stdout, result.stdout)
+
+    def desktop_dry_run_with_chromium(self, chromium_dir, snap_rc):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bindir = root / chromium_dir
+            bindir.mkdir(parents=True)
+            chromium = bindir / "chromium"
+            chromium.write_text("#!/bin/sh\nexit 0\n")
+            chromium.chmod(0o755)
+            stubs = root / "stubs"
+            stubs.mkdir()
+            snap = stubs / "snap"
+            snap.write_text("#!/bin/sh\nexit %d\n" % snap_rc)
+            snap.chmod(0o755)
+            env = dict(os.environ)
+            env.pop("HERMES_VPS_BROWSER_DATA", None)
+            env["HOME"] = directory
+            env["PATH"] = os.pathsep.join([str(bindir), str(stubs), env.get("PATH", "/usr/bin:/bin")])
+            # No --desktop-user: the profile home is $HOME, never a real account.
+            result = self.run_setup("--dry-run", "--desktop-stack", "--non-interactive", env=env)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertIn("novnc bind: 127.0.0.1", result.stdout)
+            self.assertNotIn("novnc bind: " + unspecified_v4(), result.stdout)
+            return directory, result.stdout
+
+    def test_desktop_dry_run_uses_the_snap_profile_for_snap_chromium(self):
+        home, stdout = self.desktop_dry_run_with_chromium("snap/bin", snap_rc=1)
+        self.assertIn(
+            "chromium user-data-dir: %s/snap/chromium/common/hermes-alans-way" % home, stdout)
+
+    def test_desktop_dry_run_keeps_the_private_dir_for_apt_chromium(self):
+        home, stdout = self.desktop_dry_run_with_chromium("usr/bin", snap_rc=1)
+        self.assertIn(
+            "chromium user-data-dir: %s/.local/share/hermes-alans-way/browser/chromium" % home, stdout)
+        self.assertNotIn("snap/chromium/common", stdout)
 
     def test_public_novnc_bind_is_refused_before_any_install(self):
         result = self.run_setup(
