@@ -13,7 +13,7 @@ commands in this runbook use the fork. The original author remains capthvnsen.
 
 | What | How to pin |
 |---|---|
-| Hermes | Commit `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662` (v0.21.5), branch `intelio/pinned` of the clean fork `inteliodev/hermes-agent` (fork of `NousResearch/hermes-agent`). Upgrades only by merging an upstream release into `intelio/pinned` (section 9). `setup.sh` does not install Hermes. It expects `hermes` on `PATH` at `>= 0.21`. |
+| Hermes | Commit `d9ef91e9d5a00c185fabc47d332994ab2280480a` (v0.21.5 + upstream `main` fixes through `7dab93b06e`, merged 2026-10-07; previous pin `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`), branch `intelio/pinned` of the clean fork `inteliodev/hermes-agent` (fork of `NousResearch/hermes-agent`). Upgrades only by merging an upstream release into `intelio/pinned` (section 9). `setup.sh` does not install Hermes. It expects `hermes` on `PATH` at `>= 0.21`. |
 | Desktop repo | `ALANS_WAY_REPO` (default `https://github.com/inteliodev/alans-way`). `ALANS_WAY_REF` defaults to branch `cursor/intelio-harness-layer-8db4` until that branch merges. After it merges, set `ALANS_WAY_REF` to `main` or a full 40-character SHA. |
 | This repo | `ALANS_WAY_AGENTS_REPO` (default `https://github.com/inteliodev/alans-way-agents`). `ALANS_WAY_AGENTS_REF` is optional; set it to a full SHA to pin. Empty means the default branch. |
 
@@ -284,7 +284,7 @@ in this plugin (`alans-way`) and the desktop harness, never in Hermes source.
 | Piece | Where |
 |---|---|
 | Fork | `https://github.com/inteliodev/hermes-agent` (`main` mirrors upstream) |
-| Pinned branch | `intelio/pinned`, created at `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662` |
+| Pinned branch | `intelio/pinned`, created at `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`; now at `d9ef91e9d5a00c185fabc47d332994ab2280480a` (merge of upstream `main` @ `7dab93b06e`, 2026-10-07) |
 | Sync workflow | `.github/workflows/intelio-upstream-sync.yml` + `.github/intelio/upstream-sync.sh` (PR inteliodev/hermes-agent#1 into `intelio/pinned`) |
 | VPS checkout | `~/.hermes/hermes-agent`, detached at the pinned SHA; `origin` = fork, `upstream` = NousResearch |
 

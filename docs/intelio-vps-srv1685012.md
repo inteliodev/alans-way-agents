@@ -24,7 +24,7 @@ addresses, tokens, chat IDs or tailnet addresses. Look those up on the host
 | Chromium | snap `chromium` (154.0.8037.57 at install) | snap store |
 | cups snap | installed as a Chromium dependency, **disabled** (`snap stop --disable cups`) so nothing listens on 631 |
 | Display | xvfb, x11vnc, websockify, novnc, fonts-noto-cjk, fonts-noto-color-emoji | Ubuntu apt |
-| Hermes Agent | v0.21.5, commit `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662` (detached) | that commit's `scripts/install.sh --commit … --skip-setup --skip-browser --skip-computer-use`; install dir `~/.hermes/hermes-agent` |
+| Hermes Agent | v0.21.5+8865.gd9ef91e, commit `d9ef91e9d5a00c185fabc47d332994ab2280480a` (detached; `intelio/pinned` = upstream `main` @ `7dab93b06e` merged 2026-10-07). Previous: `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662` | installed at 5d3c059 with that commit's `scripts/install.sh --commit … --skip-setup --skip-browser --skip-computer-use`; upgraded 2026-10-07 the same way by hand (`git checkout --detach <sha>`, `pm.cli install --without agent-browser --without cua-driver`, `hermes_cli/source_completion.py --source …`). Rollback: `bash ~/intelio-backups/hermes-20261007-121150/rollback.sh`. Install dir `~/.hermes/hermes-agent` |
 | alans-way (desktop/browser host) | branch `cursor/intelio-harness-layer-8db4` (08361e2 at install) | `~/intelio/alans-way` |
 | alans-way-agents (plugin) | branch `cursor/intelio-vps-harness-1162` | `~/intelio/alans-way-agents` |
 | Plugin `alans-way` | 0.4.1, installed and enabled in the default profile **and** in profile `intelio` | `file://~/intelio/alans-way-agents#alans-way` |
