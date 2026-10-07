@@ -49,8 +49,24 @@ hermes_plugin_reinstall() {
   hermes plugins install --force "$_src"
 }
 
+# hermes_allow_gateway_injection <plugin-id> [profile]
+# Upstream 7b2ff7a7d4: PluginContext._gateway_injection_allowed() reads
+# plugins.entries.<plugin-id>.allow_gateway_injection from the config of the
+# plugin manager's own HERMES_HOME (the home the plugin was loaded from),
+# never the calling profile. setup.sh installs the plugin into the default
+# home, so that config must carry the flag; the bound profile also gets it so
+# a profile-scoped install of the plugin reads the same answer. Idempotent.
+hermes_allow_gateway_injection() {
+  _plugin=$1
+  _profile=${2:-}
+  hermes config set "plugins.entries.$_plugin.allow_gateway_injection" true >/dev/null || return 1
+  if [ -n "$_profile" ] && [ "$_profile" != default ]; then
+    hermes -p "$_profile" config set "plugins.entries.$_plugin.allow_gateway_injection" true >/dev/null || return 1
+  fi
+}
+
 case "${1:-}" in
-  hermes_install_supports_live_gateway|hermes_gateway_running|hermes_plugin_reinstall)
+  hermes_install_supports_live_gateway|hermes_gateway_running|hermes_plugin_reinstall|hermes_allow_gateway_injection)
     _fn=$1
     shift
     "$_fn" "$@"

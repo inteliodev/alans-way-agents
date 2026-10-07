@@ -327,9 +327,11 @@ print("bound" if s.get("route_bound") else "unbound", "on" if s.get("enabled") i
       "bound paused") warn "proactivity bound but paused — the bot never messages first (run: hermes proactivity probe, then hermes proactivity resume)";;
       *) warn "no primary route bound — proactivity is off (run: setup.sh --bind)";;
     esac
-    [ "$(hermes ${PROFILE:+-p "$PROFILE"} config get "plugins.entries.$PLUGIN_NAME.allow_gateway_injection" 2>/dev/null | tail -1)" = true ] \
+    # Hermes reads this from the home the plugin was loaded from (the default
+    # home setup installs into), not from --profile.
+    [ "$(hermes config get "plugins.entries.$PLUGIN_NAME.allow_gateway_injection" 2>/dev/null | tail -1)" = true ] \
       && ok "gateway injection allowed for $PLUGIN_NAME" \
-      || warn "gateway injection not allowed — proactive turns are dropped (run: hermes config set plugins.entries.$PLUGIN_NAME.allow_gateway_injection true)"
+      || warn "gateway injection not allowed in the plugin's home — proactive turns are dropped (run: hermes config set plugins.entries.$PLUGIN_NAME.allow_gateway_injection true)"
   fi
   [ -f "$HERMES_HOME/hooks/$PLUGIN_NAME/handler.py" ] \
     && ok "gateway hook present" || bad "gateway hook missing at $HERMES_HOME/hooks/$PLUGIN_NAME/"
@@ -884,7 +886,9 @@ for i, line in enumerate(sys.stdin, 1):
            ON="$(ask "  Turn proactive messages on now? The bot may then message this chat first. [y/N]" "N")"
            case "$ON" in
              y|Y|yes)
-               if hermes $BIND_PROF config set "plugins.entries.$PLUGIN_NAME.allow_gateway_injection" true >/dev/null 2>&1 \
+               # Read from the plugin manager's own home (the default home the
+               # plugin is installed in), not the bound profile — write both.
+               if hermes_allow_gateway_injection "$PLUGIN_NAME" "$SEL_PROF" \
                    && hermes $BIND_PROF proactivity probe >/dev/null 2>&1 \
                    && hermes $BIND_PROF proactivity resume >/dev/null 2>&1; then
                  ok "proactivity on"

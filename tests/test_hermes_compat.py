@@ -1,4 +1,4 @@
-"""Hermes CLI compatibility: live-gateway plugin reinstall.
+"""Hermes CLI compatibility: live-gateway plugin reinstall and injection permission.
 
 A stub `hermes` on PATH records every call; nothing here runs real Hermes.
 """
@@ -31,6 +31,9 @@ case "$*" in
     fi
     exit 0;;
   "proactivity status") echo '{}'; exit 0;;
+  # The flag lives only in the default home, as Hermes reads it.
+  "config get plugins.entries.alans-way.allow_gateway_injection") echo true; exit 0;;
+  -p\ *\ config\ get*) echo false; exit 0;;
 esac
 exit 0
 """
@@ -95,6 +98,17 @@ class CompatHelperTests(unittest.TestCase):
         self.assertIn("Cannot reinstall plugin files", result.stdout)
         self.assertIn("stub stderr: refused", result.stderr)
 
+    def test_injection_flag_is_written_to_the_default_home_and_bound_profile(self):
+        key = "config set plugins.entries.alans-way.allow_gateway_injection true"
+        result, calls = self.run_helper("hermes_allow_gateway_injection", "alans-way", "alan-local")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls, [key, "-p alan-local " + key])
+        for profile in ("default", ""):
+            with self.subTest(profile=profile):
+                result, calls = self.run_helper("hermes_allow_gateway_injection", "alans-way", profile)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(calls, [key])
+
     def test_supports_flag_reads_install_help(self):
         result, _ = self.run_helper("hermes_install_supports_live_gateway", live_flag=True)
         self.assertEqual(result.returncode, 0)
@@ -148,6 +162,24 @@ class SetupPluginUpdateTests(unittest.TestCase):
         self.assertIn("Cannot reinstall plugin files", result.stdout)
         self.assertIn("FAIL could not update the installed plugin", result.stdout)
         self.assertNotIn("gateway restart", calls)
+
+
+class VerifyInjectionTests(unittest.TestCase):
+    def test_verify_reads_the_flag_from_the_plugin_home_not_the_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ)
+            env.pop("HERMES_HOME", None)
+            env.update({
+                "HOME": directory,
+                "PATH": os.pathsep.join([str(stub_bin(directory, False)), env.get("PATH", "/usr/bin:/bin")]),
+                "HERMES_STUB_LOG": str(Path(directory) / "calls.log"),
+            })
+            result = subprocess.run(
+                [SH, str(SETUP), "--verify", "--non-interactive", "--profile", "alan-local"],
+                capture_output=True, text=True, env=env)
+            self.assertIn("ok   gateway injection allowed for alans-way", result.stdout)
+            calls = (Path(directory) / "calls.log").read_text().splitlines()
+            self.assertIn("config get plugins.entries.alans-way.allow_gateway_injection", calls)
 
 
 if __name__ == "__main__":
