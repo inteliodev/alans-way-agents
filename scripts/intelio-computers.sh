@@ -27,6 +27,11 @@ INTELIO_COMPUTERS_ENV_KEY="INTELIO_NODES_MCP_TOKEN"
 INTELIO_COMPUTERS_AUTH='Bearer ${INTELIO_NODES_MCP_TOKEN}'
 INTELIO_COMPUTERS_TIMEOUT=300
 INTELIO_COMPUTERS_CONNECT_TIMEOUT=30
+# A push through the relay asks Hayden by MCP elicitation; the relay waits
+# 150 s (INTELIO_PUSH_APPROVAL_WAIT_S). Hermes' own wait (ElicitationHandler,
+# tools/mcp_tool_sampling.py:271, default 300) must end first and inside the
+# 300 s tool timeout, so an unanswered prompt is a clean "not allowed".
+INTELIO_COMPUTERS_ELICIT_TIMEOUT=120
 INTELIO_COMPUTERS_CHANGED=0
 
 intelio_computers_token_file() {
@@ -183,7 +188,8 @@ intelio_computers_apply() {
     if intelio_computers_hermes "$_p" config set "$_key.url" "$INTELIO_COMPUTERS_URL" >/dev/null \
         && intelio_computers_hermes "$_p" config set "$_key.headers.Authorization" "$INTELIO_COMPUTERS_AUTH" >/dev/null \
         && intelio_computers_hermes "$_p" config set "$_key.timeout" "$INTELIO_COMPUTERS_TIMEOUT" >/dev/null \
-        && intelio_computers_hermes "$_p" config set "$_key.connect_timeout" "$INTELIO_COMPUTERS_CONNECT_TIMEOUT" >/dev/null; then
+        && intelio_computers_hermes "$_p" config set "$_key.connect_timeout" "$INTELIO_COMPUTERS_CONNECT_TIMEOUT" >/dev/null \
+        && intelio_computers_hermes "$_p" config set "$_key.elicitation.timeout" "$INTELIO_COMPUTERS_ELICIT_TIMEOUT" >/dev/null; then
       [ "$_before" = "$(intelio_computers_config_sum "$_home/config.yaml")" ] || INTELIO_COMPUTERS_CHANGED=1
       printf '  ok   %s\n' "profile $_p: $INTELIO_COMPUTERS_SERVER -> $INTELIO_COMPUTERS_URL (token in $_home/.env, $_state)"
     else
@@ -245,6 +251,7 @@ intelio_computers_verify() {
     _url=$(intelio_computers_hermes "$_p" config get "$_key.url" 2>/dev/null | tail -1)
     _to=$(intelio_computers_hermes "$_p" config get "$_key.timeout" 2>/dev/null | tail -1)
     _cto=$(intelio_computers_hermes "$_p" config get "$_key.connect_timeout" 2>/dev/null | tail -1)
+    _eto=$(intelio_computers_hermes "$_p" config get "$_key.elicitation.timeout" 2>/dev/null | tail -1)
     _en=$(intelio_computers_hermes "$_p" config get "$_key.enabled" 2>/dev/null | tail -1)
     # `config get` expands ${VAR} from this profile's .env and masks
     # secret-shaped values ("Bear...abcd"); compare inside python and print
@@ -261,10 +268,11 @@ elif "INTELIO_NODES_MCP_TOKEN" in v or (masked and v.endswith("KEN}")): print("l
 elif not v or v=="null": print("missing")
 else: print("other")' 2>/dev/null)
     if [ "$_url" = "$INTELIO_COMPUTERS_URL" ] && [ "$_to" = "$INTELIO_COMPUTERS_TIMEOUT" ] \
-        && [ "$_cto" = "$INTELIO_COMPUTERS_CONNECT_TIMEOUT" ] && [ "$_auth" = resolved ]; then
+        && [ "$_cto" = "$INTELIO_COMPUTERS_CONNECT_TIMEOUT" ] && [ "$_eto" = "$INTELIO_COMPUTERS_ELICIT_TIMEOUT" ] \
+        && [ "$_auth" = resolved ]; then
       printf '  ok   %s\n' "profile $_p: mcp_servers.$INTELIO_COMPUTERS_SERVER configured; Authorization resolves from this profile's .env"
     else
-      printf '  FAIL %s\n' "profile $_p: mcp_servers.$INTELIO_COMPUTERS_SERVER incomplete (url=${_url:-unset} timeout=${_to:-unset} connect_timeout=${_cto:-unset} auth=${_auth:-unset}) — re-run setup.sh"
+      printf '  FAIL %s\n' "profile $_p: mcp_servers.$INTELIO_COMPUTERS_SERVER incomplete (url=${_url:-unset} timeout=${_to:-unset} connect_timeout=${_cto:-unset} elicitation.timeout=${_eto:-unset} auth=${_auth:-unset}) — re-run setup.sh"
       _rc=1
     fi
     case "$_en" in

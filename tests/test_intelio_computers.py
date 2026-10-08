@@ -140,7 +140,8 @@ class ComputersApplyTests(unittest.TestCase):
             "-p intelio config set %s.url %s" % (KEY, env.env["INTELIO_NODES_MCP_URL"]),
             "-p intelio config set %s.headers.Authorization Bearer ${INTELIO_NODES_MCP_TOKEN}" % KEY,
             "-p intelio config set %s.timeout 300" % KEY,
-            "-p intelio config set %s.connect_timeout 30" % KEY]))
+            "-p intelio config set %s.connect_timeout 30" % KEY,
+            "-p intelio config set %s.elicitation.timeout 120" % KEY]))
 
     def test_contract_url_is_the_default(self):
         env = self.env()
