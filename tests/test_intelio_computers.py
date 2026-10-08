@@ -312,5 +312,112 @@ class SetupComputersTests(unittest.TestCase):
         self.assertEqual(self.env.calls().count("gateway restart"), 0)
 
 
+class FakeRelaySessionToolTests(unittest.TestCase):
+    """The CI fake relay serves the stage-2 session tools over real MCP JSON-RPC."""
+
+    STAGE2 = ("start_session", "send_input", "read_output", "stop_session", "list_sessions")
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        token_file = Path(tmp.name) / "token"
+        token_file.write_text(TOKEN + "\n")
+        self.port = free_port()
+        relay = subprocess.Popen(
+            [sys.executable, str(FAKE_RELAY), "--token-file", str(token_file), "--port", str(self.port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(relay.wait)
+        self.addCleanup(relay.terminate)
+        for _ in range(50):
+            try:
+                socket.create_connection(("127.0.0.1", self.port), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        self.rid = 0
+
+    def rpc(self, method, params=None, token=TOKEN):
+        import json
+        import urllib.request
+        self.rid += 1
+        request = urllib.request.Request(
+            "http://127.0.0.1:%d/mcp" % self.port,
+            data=json.dumps({"jsonrpc": "2.0", "id": self.rid, "method": method,
+                             "params": params or {}}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read())
+
+    def call(self, name, **arguments):
+        import json
+        result = self.rpc("tools/call", {"name": name, "arguments": arguments})["result"]
+        return result["isError"], json.loads(result["content"][0]["text"]) if not result["isError"] \
+            else result["content"][0]["text"]
+
+    def test_tools_list_has_all_thirteen_with_required_args(self):
+        tools = {t["name"]: t for t in self.rpc("tools/list")["result"]["tools"]}
+        self.assertEqual(len(tools), 13, sorted(tools))
+        for name in self.STAGE2:
+            with self.subTest(tool=name):
+                self.assertIn("computer", tools[name]["inputSchema"]["required"])
+        for name in ("send_input", "read_output", "stop_session"):
+            self.assertIn("session_id", tools[name]["inputSchema"]["required"])
+        self.assertEqual(set(tools["start_session"]["inputSchema"]["properties"]),
+                         {"computer", "command", "cwd", "cols", "rows", "env"})
+        self.assertIn("since", tools["read_output"]["inputSchema"]["properties"])
+        self.assertIn("max_bytes", tools["read_output"]["inputSchema"]["properties"])
+
+    def test_session_round_trip_with_cursor(self):
+        err, started = self.call("start_session", computer="ci-laptop", command="bash", cwd="/tmp")
+        self.assertFalse(err)
+        sid = started["session_id"]
+        self.assertTrue(started["pty"])
+        self.assertIsInstance(started["pid"], int)
+        _, first = self.call("read_output", computer="ci-laptop", session_id=sid)
+        self.assertIn("started: bash", first["output"])
+        self.assertFalse(first["exited"])
+        self.assertFalse(first["truncated"])
+        _, empty = self.call("read_output", computer="ci-laptop", session_id=sid, since=first["cursor"])
+        self.assertEqual((empty["output"], empty["cursor"]), ("", first["cursor"]))
+        _, sent = self.call("send_input", computer="ci-laptop", session_id=sid, text="ls", enter=True)
+        self.assertTrue(sent["ok"])
+        _, more = self.call("read_output", computer="ci-laptop", session_id=sid, since=first["cursor"])
+        self.assertEqual(more["output"], "ls\n")
+        _, listed = self.call("list_sessions", computer="ci-laptop")
+        self.assertEqual([s["session_id"] for s in listed["sessions"]], [sid])
+        _, stopped = self.call("stop_session", computer="ci-laptop", session_id=sid)
+        self.assertEqual(stopped["exit_code"], 0)
+        _, final = self.call("read_output", computer="ci-laptop", session_id=sid, since=more["cursor"])
+        self.assertTrue(final["exited"])
+        self.assertEqual(final["exit_code"], 0)
+        _, listed = self.call("list_sessions", computer="ci-laptop")
+        self.assertEqual(listed["sessions"], [])
+
+    def test_max_bytes_truncates_and_cursor_resumes(self):
+        _, started = self.call("start_session", computer="ci-laptop", command="bash")
+        sid = started["session_id"]
+        _, part = self.call("read_output", computer="ci-laptop", session_id=sid, max_bytes=5)
+        self.assertTrue(part["truncated"])
+        self.assertEqual(part["cursor"], 5)
+        _, rest = self.call("read_output", computer="ci-laptop", session_id=sid, since=part["cursor"])
+        self.assertFalse(rest["truncated"])
+        self.assertIn("started: bash", part["output"] + rest["output"])
+
+    def test_unknown_session_and_wrong_computer_are_errors(self):
+        err, text = self.call("read_output", computer="ci-laptop", session_id="nope")
+        self.assertTrue(err)
+        self.assertIn("unknown session", text)
+        _, started = self.call("start_session", computer="ci-laptop")
+        err, _ = self.call("send_input", computer="other", session_id=started["session_id"], text="x")
+        self.assertTrue(err)
+
+    def test_session_tools_need_the_bearer(self):
+        import urllib.error
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.rpc("tools/call", {"name": "start_session", "arguments": {"computer": "ci-laptop"}},
+                     token="wrong")
+        self.assertEqual(caught.exception.code, 401)
+
+
 if __name__ == "__main__":
     unittest.main()
