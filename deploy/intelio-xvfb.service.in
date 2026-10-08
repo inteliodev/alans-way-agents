@@ -1,0 +1,14 @@
+[Unit]
+Description=Intelio Xvfb on display :99
+After=network.target
+
+[Service]
+Type=simple
+# System units set User= to the non-root desktop account. User units omit it.
+@USER_LINE@
+ExecStart=@XVFB@ :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=@WANTED_BY@

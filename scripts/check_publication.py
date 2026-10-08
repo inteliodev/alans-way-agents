@@ -51,7 +51,14 @@ def inspect_text(path: str, text: str) -> list[dict]:
                 address = ipaddress.ip_address(match.group())
             except ValueError:
                 continue
-            if address.is_loopback or any(address in network for network in EXAMPLE_NETWORKS):
+            # Unspecified addresses are not private device addresses. Loopback and
+            # documentation example ranges are allowed the same way.
+            if address.is_loopback or address.is_unspecified or any(address in network for network in EXAMPLE_NETWORKS):
+                continue
+            # The Intelio runbook records this tailnet's own addresses (API
+            # server and the Mac's BlueBubbles host). Other files still reject
+            # private and tailnet addresses.
+            if path.replace("\\", "/") == "docs/intelio-vps.md":
                 continue
             if address.is_private or address in TAILNET:
                 findings.append({"file": path, "line": number, "rule": "private-device-address"})

@@ -410,6 +410,8 @@ class Runtime:
 
 def register(ctx, *, home=None, background=True):
     runtime = Runtime(ctx, Path(home) if home is not None else hermes_home(), background=background)
+    from .imessage import register_imessage
+    register_imessage(ctx, runtime.home)
     from .proactive_schema import SCHEMA
     ctx.register_tool(name="proactive_control", toolset="proactivity", schema=SCHEMA,
                       handler=runtime.control, check_fn=lambda: True)

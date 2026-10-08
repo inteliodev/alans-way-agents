@@ -7,7 +7,9 @@ Type=simple
 # browser_exec (Browser Use) connects to the cdp_url in the Hermes browser
 # config (default http://127.0.0.1:9222). This unit runs a second Chromium
 # there with its own --user-data-dir so it never shares a profile with the
-# workspace VPS browser on :9223. DISPLAY must match the Xvfb the desktop
+# workspace VPS browser on :9223. Snap Chromium for that workspace profile
+# must live under the desktop user's ~/snap/chromium/common, not this root
+# path — see docs/intelio-vps.md. DISPLAY must match the Xvfb the desktop
 # stack uses. HERMES_VPS_BROWSER_DATA points at a directory containing a
 # config.json with cdpUrl, browserCommand and browserArgs.
 User=root

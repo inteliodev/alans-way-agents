@@ -54,6 +54,24 @@ class ObservationTests(unittest.TestCase):
             self.assertEqual(runtime.ledger.snapshot()["tasks"][0]["status"], "active")
             runtime.close()
 
+    def test_newer_native_statuses_are_kept_and_unknown_ones_fail_closed(self):
+        from types import SimpleNamespace
+        module = plugin()
+        for native_status, expected in (("scheduled", "active"), ("review", "active"),
+                                        ("some-future-column", "blocked")):
+            with self.subTest(native_status=native_status), tempfile.TemporaryDirectory() as directory:
+                host = SimpleNamespace(dispatch_tool=lambda *_, s=native_status: {
+                    "task": {"id": "native-card", "status": s}})
+                runtime = module.Runtime(host, Path(directory))
+                runtime.ledger.record_task({"id": "watch", "title": "Approved work", "scope": "Review draft",
+                    "next_action": "Verify", "owner": "primary", "status": "active", "approved": True,
+                    "native_task_id": "native-card"})
+                context = runtime.review_context()
+                self.assertEqual(context["tasks"][0]["status"], expected)
+                self.assertEqual(context["preferences"]["native_task_status"]["watch"]["status"],
+                                 native_status if expected == "active" else "unknown")
+                runtime.close()
+
     def test_actual_reviewer_accepts_the_collected_authorized_task_shape(self):
         from types import SimpleNamespace
         module = plugin()

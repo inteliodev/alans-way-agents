@@ -1,5 +1,10 @@
 name: tests
 on: [push, pull_request]
+env:
+  # Hermes fork commit the Intelio VPS runs (docs/intelio-vps.md, Pins).
+  # Bump with the checklist in docs/intelio-vps.md section 9.
+  HERMES_REPO: https://github.com/inteliodev/hermes-agent
+  HERMES_PIN: d9ef91e9d5a00c185fabc47d332994ab2280480a
 jobs:
   python:
     runs-on: ubuntu-latest
@@ -10,3 +15,75 @@ jobs:
           python-version: "3.11"
       - run: python -m unittest discover -s tests
       - run: python scripts/check_publication.py
+      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh
+
+  # Real Hermes at the pinned SHA in a throwaway HERMES_HOME: the plugin loads
+  # through the real plugin manager and the CLI surface setup.sh calls exists.
+  # continue-on-error until it has been green on a few runs.
+  hermes-contract:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Throwaway HERMES_HOME
+        run: |
+          mkdir -p "$RUNNER_TEMP/hermes-home"
+          echo "HERMES_HOME=$RUNNER_TEMP/hermes-home" >> "$GITHUB_ENV"
+      - name: Install Hermes at the pinned fork SHA
+        # Same dependency path as the VPS (Hermes' pm.cli; wheel/sdist builds
+        # are refused). PM installs its runtime under $HERMES_HOME/installs.
+        run: |
+          set -eux
+          src="$RUNNER_TEMP/hermes-agent"
+          mkdir -p "$src"
+          git -C "$src" init -q
+          git -C "$src" remote add origin "$HERMES_REPO"
+          git -C "$src" fetch -q --depth 1 origin "$HERMES_PIN"
+          git -C "$src" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$src" rev-parse HEAD)" = "$HERMES_PIN"
+          (cd "$src" && python -m pm.cli install --without agent-browser --without cua-driver)
+          venv="$(ls -td "$HERMES_HOME"/installs/*/environments/*/venv | head -1)"
+          echo "$venv/bin" >> "$GITHUB_PATH"
+          "$venv/bin/hermes" --version
+      - name: Install the plugin from this checkout
+        run: |
+          set -eux
+          hermes plugins install --enable "file://$GITHUB_WORKSPACE#alans-way" </dev/null
+          hermes plugins list
+          test -f "$HERMES_HOME/plugins/alans-way/plugin.yaml"
+      - name: Load through the real plugin manager
+        run: python scripts/hermes_contract.py
+      - name: CLI surface used by setup.sh
+        run: |
+          set -eux
+          sh scripts/hermes-compat.sh hermes_install_supports_live_gateway
+          for cmd in "plugins install" "plugins enable" "plugins list" \
+                     "tools enable" "tools disable" "config get" "config set" \
+                     "gateway setup" "gateway restart" "gateway stop" "proactivity"; do
+            # shellcheck disable=SC2086
+            hermes $cmd --help >/dev/null
+          done
+          hermes proactivity --help | grep -q -- --session-key
+          for action in bind probe resume configure; do
+            hermes proactivity --help | grep -q "$action"
+          done
+          # Reinstall over the existing install takes the same path setup.sh does.
+          sh scripts/hermes-compat.sh hermes_plugin_reinstall "file://$GITHUB_WORKSPACE#alans-way" </dev/null
+      - name: Injection flag is read from the plugin's own home
+        run: |
+          set -eux
+          sh scripts/hermes-compat.sh hermes_allow_gateway_injection alans-way
+          test "$(hermes config get plugins.entries.alans-way.allow_gateway_injection | tail -1)" = true
+          python - <<'PY'
+          from hermes_cli.plugins import PluginContext, discover_plugins, get_plugin_manager
+          discover_plugins()
+          manager = get_plugin_manager()
+          loaded = manager._plugins.get("alans-way")
+          assert loaded is not None, sorted(manager._plugins)
+          assert PluginContext(loaded.manifest, manager)._gateway_injection_allowed() is True
+          print("ok   _gateway_injection_allowed() is True for alans-way")
+          PY

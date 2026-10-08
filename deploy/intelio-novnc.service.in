@@ -1,0 +1,16 @@
+[Unit]
+Description=Intelio noVNC (loopback or Tailscale address)
+After=intelio-x11vnc.service
+Requires=intelio-x11vnc.service
+
+[Service]
+Type=simple
+@USER_LINE@
+# @NOVNC_BIND@ is 127.0.0.1 unless setup.sh was given a Tailscale address.
+# websockify then proxies to x11vnc on 127.0.0.1:5900 only.
+ExecStart=@WEBSOCKIFY@ --web=@NOVNC_WEB@ @NOVNC_BIND@:6080 127.0.0.1:5900
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=@WANTED_BY@

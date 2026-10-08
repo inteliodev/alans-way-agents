@@ -17,9 +17,12 @@
 //   --bot-id ID                required: this bot's tab-owner identity
 //   --bot-name NAME            optional display name for the agent cursor
 //   --mac-ssh USER@HOST        Mac ssh alias/host for the Mac path
-//   --mac-node PATH            node binary on the Mac (default: the app's own runtime)
+//   --mac-node PATH            node binary on the Mac (default: the app's own runtime,
+//                              or /opt/homebrew/bin/node for a source checkout —
+//                              non-interactive ssh does not load Homebrew's PATH)
 //   --mac-script PATH          browser-mcp.cjs path on the Mac
-//                              (default: the installed app's bundled copy)
+//                              (default: Intelio.app, then the Intelio source
+//                              checkout, then the legacy Alan's Way bundles)
 //   --vps-script PATH          browser-mcp.cjs path on this host
 //                              (default: sibling copy, then the deployed copy)
 //   --vps-connection PATH      VPS browser connection.json
@@ -47,15 +50,54 @@ const botId = arg('--bot-id') || process.env.HERMES_WORKSPACE_BOT_ID || '';
 const botName = arg('--bot-name') || process.env.HERMES_BOT_NAME || '';
 const macSsh = arg('--mac-ssh') || process.env.HERMES_WORKSPACE_MAC_SSH || '';
 const macNode = arg('--mac-node') || process.env.HERMES_WORKSPACE_MAC_NODE || '';
+const INTELIO_MAC_SCRIPTS = [
+  '~/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs',
+  '/Applications/Intelio.app/Contents/Resources/app/scripts/browser-mcp.cjs',
+  '~/code/alans-way-intelio/desktop/scripts/browser-mcp.cjs',
+];
+const LEGACY_MAC_SCRIPTS = [
+  '/Applications/alans-way-localapp.app/Contents/Resources/app/scripts/browser-mcp.cjs',
+  '/Applications/Open Alan.app/Contents/Resources/app/scripts/browser-mcp.cjs',
+  "/Applications/Hermes- Alan's way.app/Contents/Resources/app/scripts/browser-mcp.cjs",
+  '/Applications/Hermes Workspace.app/Contents/Resources/app/scripts/browser-mcp.cjs',
+];
+
+function defaultMacScripts() {
+  return [...INTELIO_MAC_SCRIPTS, ...LEGACY_MAC_SCRIPTS];
+}
+
+// Home-relative candidates expand on the Mac. Only a conservative relative
+// path is interpolated; everything else stays single-quoted.
+function macScriptProbeClause(script, alive) {
+  if (script.startsWith('~/')) {
+    const rel = script.slice(2);
+    if (!/^[\w./-]+$/.test(rel) || rel.split('/').includes('..')) {
+      throw new Error('workspace-router: refusing unsafe home-relative Mac script path');
+    }
+    const expanded = `"$HOME/${rel}"`;
+    return `if [ -f ${expanded} ] && ${alive}; then printf %s ${expanded}; exit 0; fi`;
+  }
+  return `if [ -f ${shQuote(script)} ] && ${alive}; then printf %s ${shQuote(script)}; exit 0; fi`;
+}
+
+// The probe prints a path. Accept only a configured absolute path, or the
+// home-expanded form of a ~/ candidate under /Users/<name> or /home/<name>.
+function acceptProbedMacScript(output, scripts) {
+  if (typeof output !== 'string' || output.length === 0 || output.length > 4096) return false;
+  if (output.includes('\n') || output.includes('\0')) return false;
+  if (scripts.includes(output)) return true;
+  for (const script of scripts) {
+    if (!script.startsWith('~/')) continue;
+    const suffix = script.slice(1);
+    if (!output.endsWith(suffix)) continue;
+    const home = output.slice(0, output.length - suffix.length);
+    if (/^\/(?:Users|home)\/[^/]+$/.test(home)) return true;
+  }
+  return false;
+}
+
 const configuredMacScript = arg('--mac-script') || process.env.HERMES_WORKSPACE_MAC_MCP;
-const macScripts = configuredMacScript
-  ? [configuredMacScript]
-  : [
-      '/Applications/alans-way-localapp.app/Contents/Resources/app/scripts/browser-mcp.cjs',
-      '/Applications/Open Alan.app/Contents/Resources/app/scripts/browser-mcp.cjs',
-      "/Applications/Hermes- Alan's way.app/Contents/Resources/app/scripts/browser-mcp.cjs",
-      '/Applications/Hermes Workspace.app/Contents/Resources/app/scripts/browser-mcp.cjs',
-    ];
+const macScripts = configuredMacScript ? [configuredMacScript] : defaultMacScripts();
 const siblingScript = path.join(__dirname, 'browser-mcp.cjs');
 const vpsScript =
   arg('--vps-script') ||
@@ -97,9 +139,13 @@ function macBackendCommand(script, node, id, name) {
   const tail = [shQuote(script), '--bot-id', shQuote(id)];
   if (name) tail.push('--bot-name', shQuote(name));
   const args = tail.join(' ');
-  if (node) return `${node} ${args}`;
+  if (node) return `${shQuote(node)} ${args}`;
   const bundle = /^(.*\/([^/]+)\.app)\/Contents\/Resources\//.exec(script);
-  if (!bundle) return `node ${args}`;
+  if (!bundle) {
+    // Source checkouts have no Electron binary. Non-interactive ssh does not
+    // load Homebrew, so prefer the usual Apple Silicon node before PATH.
+    return `if [ -x /opt/homebrew/bin/node ]; then exec /opt/homebrew/bin/node ${args}; else exec node ${args}; fi`;
+  }
   const exe = shQuote(`${bundle[1]}/Contents/MacOS/${bundle[2]}`);
   return `if [ -x ${exe} ]; then ELECTRON_RUN_AS_NODE=1 exec ${exe} ${args}; else exec node ${args}; fi`;
 }
@@ -116,7 +162,7 @@ function probeMac(timeoutMs, connectTimeout = 6) {
       `port=$(sed -n 's/.*"url"[^0-9]*[0-9.]*:\\([0-9]*\\).*/\\1/p' "$conn" | head -1) && ` +
       `curl -s -m 4 -o /dev/null "http://127.0.0.1:\${port:-9464}/status"; }`;
     const probe = macScripts
-      .map(script => `if [ -f ${shQuote(script)} ] && ${alive}; then printf %s ${shQuote(script)}; exit 0; fi`)
+      .map(script => macScriptProbeClause(script, alive))
       .join('; ') + '; exit 1';
     const child = spawn(
       'ssh',
@@ -146,7 +192,7 @@ function probeMac(timeoutMs, connectTimeout = 6) {
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
-      resolve(code === 0 && macScripts.includes(output) ? output : null);
+      resolve(code === 0 && acceptProbedMacScript(output, macScripts) ? output : null);
     });
   });
 }
@@ -362,4 +408,13 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { readMacState, workspaceNotice, annotateResult, makeAnnotator, macBackendCommand };
+module.exports = {
+  readMacState,
+  workspaceNotice,
+  annotateResult,
+  makeAnnotator,
+  macBackendCommand,
+  defaultMacScripts,
+  macScriptProbeClause,
+  acceptProbedMacScript,
+};

@@ -3,6 +3,10 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 
+# Hermes kanban statuses (hermes_cli.kanban_workflow.DEFAULT_STATUSES; upstream
+# 96db175da7 added scheduled and review to the tool surface).
+KNOWN_STATUSES = frozenset({"triage", "todo", "scheduled", "ready", "running", "blocked",
+                            "review", "done", "archived"})
 
 def _eligible(task, now):
     if (type(task) is not dict or task.get("approved") is not True
@@ -72,10 +76,12 @@ def _snapshot(document, native_id):
     card = document.get("task")
     if (type(card) is not dict or _rejected(card)
             or type(card.get("id")) is not str or card["id"] != native_id
-            or type(card.get("status")) is not str
-            or card["status"] not in {"triage", "todo", "ready", "running", "blocked", "done", "archived"}):
+            or type(card.get("status")) is not str):
         return None
-    return {"status": card["status"], "updated_at": _updated_at(card.get("updated_at"))}
+    # A status this plugin does not know (a newer Hermes workflow column) is kept
+    # as "unknown" instead of dropping the card; callers treat it fail-closed.
+    status = card["status"] if card["status"] in KNOWN_STATUSES else "unknown"
+    return {"status": status, "updated_at": _updated_at(card.get("updated_at"))}
 
 
 def collect(ctx, tasks: list) -> dict:
