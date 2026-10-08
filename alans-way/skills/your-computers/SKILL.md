@@ -102,10 +102,11 @@ so with its `session_id`.
 
 ## Elevation needs the user
 
-Admin or root actions (UAC, sudo, installers, system settings) raise a confirm
-dialog on that computer, which only the user can approve. Say what you are
-about to do and that a prompt will appear on their screen, then wait. If it is
-declined or times out, stop and report; do not look for a way around it.
+Admin or root actions (UAC prompts, admin password prompts, installers, system
+settings) raise a confirm dialog on that computer, which only the user can
+approve. Say what you are about to do and that a prompt will appear on their
+screen, then wait. If it is declined or times out, stop and report; do not look
+for a way around it.
 
 ## Secrets stay where they are
 
