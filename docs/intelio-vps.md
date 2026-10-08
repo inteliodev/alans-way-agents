@@ -522,6 +522,8 @@ mcp_servers:
       Authorization: "Bearer ${INTELIO_NODES_MCP_TOKEN}"
     timeout: 300
     connect_timeout: 30
+    elicitation:
+      timeout: 120   # push approval prompt; ends before the relay's 150 s wait
 ```
 
 plus `INTELIO_NODES_MCP_TOKEN=<token>` in that profile's `.env` (mode 600),
@@ -530,6 +532,16 @@ copied from `~/.config/intelio/nodes-mcp.token`, which the relay installer
 `${INTELIO_NODES_MCP_TOKEN}` from the profile's own `.env` when it connects.
 The token never appears on a command line or in setup output. If the token
 file is missing, setup prints one note and skips this step.
+
+**Pushes ask Hayden.** Reading, writing, running commands and driving the
+computer need no approval. A push (`git push`, `gh pr merge`, `gh repo sync`,
+...) sent through `run_command`, `start_session` or `send_input` makes the relay
+ask through MCP elicitation, which Hermes shows as its own approval prompt
+(inline in the intelio app, buttons in Telegram). Allow covers that one command;
+Don't allow, no answer within `elicitation.timeout`, or a surface that cannot
+ask (cron, `-q`) refuses it. Protected secret files (SSH keys, `.env`,
+`auth.json`, credential stores) are refused outright. Details: `docs/intelio-node.md`
+in the desktop repo.
 
 Hermes names the tools `mcp__intelio_computers__<tool>`, for example
 `mcp__intelio_computers__list_computers` and
@@ -561,7 +573,8 @@ client agents and never get your computers unless you list them:
 ```
 
 `--verify` checks each listed profile: token present in `.env` with mode 600
-and equal to the relay token, the entry's url/timeouts, and that the
+and equal to the relay token, the entry's url/timeouts (including
+`elicitation.timeout`), and that the
 Authorization header resolves from that profile's `.env`. It also POSTs to the
 relay without a token and expects 401. A relay that is not running is a
 warning, not a failure. When the entry or token changed, setup restarts the
@@ -569,8 +582,8 @@ gateway once at the end (Hermes also reconciles `mcp_servers` on its
 housekeeping tick, so a missed restart only delays the tools).
 
 **Disable.** Per profile, without deleting anything (setup keeps it on later
-re-runs, because it only sets `url`, `headers.Authorization`, `timeout` and
-`connect_timeout`):
+re-runs, because it only sets `url`, `headers.Authorization`, `timeout`,
+`connect_timeout` and `elicitation.timeout`):
 
 ```sh
 hermes -p intelio config set mcp_servers.intelio_computers.enabled false
