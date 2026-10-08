@@ -314,6 +314,7 @@ class PluginTests(unittest.TestCase):
             self.assertIn(("skill", "proactive-primary"), facade.calls)
             self.assertIn(("skill", "workspace-operations"), facade.calls)
             self.assertIn(("skill", "workspace-setup"), facade.calls)
+            self.assertIn(("skill", "your-computers"), facade.calls)
             self.assertFalse(runtime.gateway_ready())
             self.assertIsNone(runtime.tick())
             runtime.close()
