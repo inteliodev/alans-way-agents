@@ -108,12 +108,34 @@ approve. Say what you are about to do and that a prompt will appear on their
 screen, then wait. If it is declined or times out, stop and report; do not look
 for a way around it.
 
+## Pushes need the user's yes
+
+Reading, writing, running commands and driving the computer need no approval.
+Pushing does: `git push` in any form, `gh pr merge`, `gh repo sync`, a release,
+or a write to a branch through `gh api`. When a `run_command`, `start_session`
+or `send_input` contains one, the relay asks the user with an approval prompt
+(an Allow / Don't allow row in the intelio app, buttons in Telegram) and waits.
+
+- Say what you are about to push and where before you send it.
+- Allow covers that one command, once. Each later push asks again.
+- If the answer is no, the prompt times out, or the reply says the user cannot
+  be asked here (a scheduled run), stop and report. Do not retry another way:
+  no scripts, aliases, a coding agent told to push, or another computer.
+- In a terminal session, type the whole push command in one `send_input`. A
+  push typed in pieces is refused.
+- A coding agent you run on the computer (`claude -p`, `codex exec`) must not
+  push on its own; tell it to stop before pushing, then push yourself so the
+  user is asked.
+
 ## Secrets stay where they are
 
 Do not read, print or copy secrets — `.env` files, SSH keys, keychains,
 credential stores, browser profiles, token files — unless the user asked for
 that specific thing. If a task needs a secret, have the tool on the computer
-use it in place instead of moving it into the chat or onto the VPS.
+use it in place instead of moving it into the chat or onto the VPS. The
+computer refuses the protected ones outright (private SSH keys, Hermes `.env`
+and `auth.json`, credential and password stores, browser cookie and login
+databases), even when asked; tell the user and do not work around it.
 
 ## Report what changed
 

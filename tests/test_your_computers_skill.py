@@ -79,6 +79,13 @@ class YourComputersSkillTests(unittest.TestCase):
             with self.subTest(secret=secret):
                 self.assertIn(secret, self.normalized)
 
+    def test_pushes_need_the_users_yes(self):
+        self.assertIn("Pushes need the user's yes", self.normalized)
+        self.assertIn("Allow covers that one command, once.", self.normalized)
+        self.assertIn("Do not retry another way", self.normalized)
+        self.assertIn("type the whole push command in one `send_input`", self.normalized)
+        self.assertIn("The computer refuses the protected ones outright", self.normalized)
+
     def test_report_what_changed(self):
         self.assertIn("Report what changed", self.normalized)
         self.assertIn("Do not claim a change you did not verify.", self.normalized)
