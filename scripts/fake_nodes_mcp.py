@@ -14,6 +14,7 @@ import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import sys
+import threading
 
 SUPPORTED_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MARKER = "fake-intelio-relay"
@@ -50,17 +51,87 @@ TOOLS = [
              ["computer", "command"])),
     ("screenshot", "Capture a display.",
      _schema({"computer": COMPUTER, "display": {"type": "integer"}}, ["computer"])),
+    # Stage 2: persistent terminal sessions.
+    ("start_session", "Start a terminal session.",
+     _schema({"computer": COMPUTER, "command": {"type": "string"}, "cwd": {"type": "string"},
+              "cols": {"type": "integer"}, "rows": {"type": "integer"},
+              "env": {"type": "object", "additionalProperties": {"type": "string"}}},
+             ["computer"])),
+    ("send_input", "Send text or keys to a session.",
+     _schema({"computer": COMPUTER, "session_id": {"type": "string"}, "text": {"type": "string"},
+              "enter": {"type": "boolean"}, "keys": {"type": "array", "items": {"type": "string"}}},
+             ["computer", "session_id"])),
+    ("read_output", "Read session output after a cursor.",
+     _schema({"computer": COMPUTER, "session_id": {"type": "string"}, "since": {"type": "integer"},
+              "wait_ms": {"type": "integer"}, "max_bytes": {"type": "integer"}},
+             ["computer", "session_id"])),
+    ("stop_session", "Stop a session.",
+     _schema({"computer": COMPUTER, "session_id": {"type": "string"}, "force": {"type": "boolean"}},
+             ["computer", "session_id"])),
+    ("list_sessions", "List open sessions on a computer.",
+     _schema({"computer": COMPUTER}, ["computer"])),
 ]
 TOOL_NAMES = [name for name, _desc, _schema_ in TOOLS]
+SESSION_TOOLS = ("start_session", "send_input", "read_output", "stop_session", "list_sessions")
+
+
+SESSIONS: dict = {}  # session_id -> {"output": str, "exited": bool, "exit_code": int|None}
+_LOCK = threading.Lock()
+
+
+def _error(text):
+    return {"content": [{"type": "text", "text": text}], "isError": True}
+
+
+def _session_tool(name, args):
+    """Deterministic in-memory sessions: no process runs; input is echoed back."""
+    computer = args.get("computer")
+    if name == "start_session":
+        session_id = "s%d" % (len(SESSIONS) + 1)
+        command = args.get("command") or "shell"
+        SESSIONS[session_id] = {"computer": computer, "command": command,
+                                "output": "%s started: %s\n" % (MARKER, command),
+                                "exited": False, "exit_code": None}
+        return {"marker": MARKER, "session_id": session_id, "pid": 4242, "pty": True}
+    if name == "list_sessions":
+        return {"marker": MARKER, "sessions": [
+            {"session_id": sid, "command": s["command"], "exited": s["exited"]}
+            for sid, s in SESSIONS.items() if s["computer"] == computer and not s["exited"]]}
+    session = SESSIONS.get(args.get("session_id"))
+    if session is None or session["computer"] != computer:
+        return None
+    if name == "send_input":
+        if session["exited"]:
+            return {"marker": MARKER, "ok": False, "error": "session exited"}
+        session["output"] += (args.get("text") or "") + ("\n" if args.get("enter") else "")
+        session["output"] += "".join("<%s>" % key for key in args.get("keys") or [])
+        return {"marker": MARKER, "ok": True}
+    if name == "read_output":
+        data = session["output"].encode("utf-8")
+        since = max(0, min(int(args.get("since") or 0), len(data)))
+        limit = int(args.get("max_bytes") or 65536)
+        chunk = data[since:since + limit]
+        return {"marker": MARKER, "output": chunk.decode("utf-8", "replace"), "cursor": since + len(chunk),
+                "exited": session["exited"], "exit_code": session["exit_code"],
+                "truncated": since + len(chunk) < len(data)}
+    # stop_session
+    session["exited"] = True
+    session["exit_code"] = 137 if args.get("force") else 0
+    return {"marker": MARKER, "exit_code": session["exit_code"]}
 
 
 def call_tool(name, args):
     if name not in TOOL_NAMES:
-        return {"content": [{"type": "text", "text": "unknown tool %s" % name}], "isError": True}
+        return _error("unknown tool %s" % name)
     if name == "list_computers":
         payload = {"marker": MARKER, "computers": [{
             "name": "ci-laptop", "id": "dev-ci", "os": "linux", "user": "ci",
             "online": True, "last_seen": "2026-01-01T00:00:00Z", "version": "0"}]}
+    elif name in SESSION_TOOLS:
+        with _LOCK:
+            payload = _session_tool(name, args)
+        if payload is None:
+            return _error("unknown session %s on %s" % (args.get("session_id"), args.get("computer")))
     else:
         payload = {"marker": MARKER, "tool": name, "computer": args.get("computer")}
     return {"content": [{"type": "text", "text": json.dumps(payload)}], "isError": False}

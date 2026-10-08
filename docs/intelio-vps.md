@@ -547,6 +547,21 @@ Hermes names the tools `mcp__intelio_computers__<tool>`, for example
 `mcp__intelio_computers__list_computers` and
 `mcp__intelio_computers__run_command` (checked against the pin in CI).
 
+**Sessions and the skill.** Besides one-shot `run_command`, the relay serves
+persistent terminal sessions: `start_session` opens a shell or program (a PTY
+when the computer supports it) and returns a `session_id`; `read_output`
+returns output after a `since` cursor plus `exited`/`exit_code`; `send_input`
+types text or keys; `stop_session` ends it and `list_sessions` shows what is
+still open. The plugin ships the `your-computers` skill, which teaches the
+agent how to use all thirteen tools: call `list_computers` first and name the
+computer it acts on, stop on an offline computer instead of retrying, read
+before writing, run `claude -p` / `codex exec` for one-shot coding and a
+session for interactive work, relay first-run sign-in codes to you without
+ever typing credentials, leave elevation prompts to you, never read secrets
+unless asked, stop every session it starts, and report what changed. The CI
+contract checks that pinned Hermes discovers all thirteen tools and runs a
+`start_session` + `read_output` round trip against the fake relay.
+
 **Which profiles.** `intelio` only, by default. PRC, Alignment and HHP are
 client agents and never get your computers unless you list them:
 
@@ -607,7 +622,9 @@ copies the new value into each profile's `.env`.
   SHA, applies this config to a throwaway profile, starts
   `scripts/fake_nodes_mcp.py` (a stdlib MCP server with the contract's tool
   names and bearer check) and runs `scripts/hermes_computers_contract.py`,
-  which calls Hermes' own `discover_mcp_tools()` and dispatches two tools. A
+  which calls Hermes' own `discover_mcp_tools()`, expects all thirteen tools
+  and dispatches `list_computers`, `computer_info` and a `start_session` +
+  `read_output` round trip. A
   pin bump that changes config loading, `${VAR}` expansion, transport or tool
   naming fails there before the VPS moves.
 
