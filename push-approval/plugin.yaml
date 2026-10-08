@@ -1,0 +1,13 @@
+name: push-approval
+version: "0.1.0"
+description: "intelio push approval: any push an agent makes (git push, gh pr merge, gh repo sync, ...) asks Hayden first in the intelio app or Telegram through Hermes' own approval prompt, even with approvals.mode off. Pairs with the git pre-push guard installed by scripts/push-approval.sh."
+author: "intelio"
+license: MIT
+homepage: "https://github.com/inteliodev/alans-way-agents"
+requires_hermes: ">=0.21"
+tags:
+  - approvals
+  - git
+  - safety
+provides_hooks:
+  - pre_tool_call

@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
       - run: python -m unittest discover -s tests
       - run: python scripts/check_publication.py
-      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh
+      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh scripts/push-approval.sh
 
   # Real Hermes at the pinned SHA in a throwaway HERMES_HOME: the plugin loads
   # through the real plugin manager and the CLI surface setup.sh calls exists.
@@ -87,3 +87,9 @@ jobs:
           assert PluginContext(loaded.manifest, manager)._gateway_injection_allowed() is True
           print("ok   _gateway_injection_allowed() is True for alans-way")
           PY
+      - name: Push approval against pinned Hermes (mode off still asks for pushes)
+        run: |
+          set -eux
+          hermes plugins install --force --enable "file://$GITHUB_WORKSPACE#push-approval" </dev/null
+          test -f "$HERMES_HOME/plugins/push-approval/plugin.yaml"
+          python scripts/push_approval_contract.py
