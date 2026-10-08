@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
       - run: python -m unittest discover -s tests
       - run: python scripts/check_publication.py
-      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh scripts/intelio-computers.sh
+      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh scripts/intelio-computers.sh scripts/push-approval.sh
 
   # Real Hermes at the pinned SHA in a throwaway HERMES_HOME: the plugin loads
   # through the real plugin manager and the CLI surface setup.sh calls exists.
@@ -119,3 +119,9 @@ jobs:
           grep -q 'INTELIO_NODES_MCP_TOKEN' "$HERMES_HOME/profiles/intelio/config.yaml"
           test ! -e "$HERMES_HOME/.env" || ! grep -q INTELIO_NODES_MCP_TOKEN "$HERMES_HOME/.env"
           HERMES_HOME="$HERMES_HOME/profiles/intelio" python scripts/hermes_computers_contract.py
+      - name: Push approval against pinned Hermes (mode off still asks for pushes)
+        run: |
+          set -eux
+          hermes plugins install --force --enable "file://$GITHUB_WORKSPACE#push-approval" </dev/null
+          test -f "$HERMES_HOME/plugins/push-approval/plugin.yaml"
+          python scripts/push_approval_contract.py
