@@ -113,7 +113,8 @@ class NativeSnapshotTests(unittest.TestCase):
 
 
     def test_plain_dictionary_response_is_supported(self):
-        for status in ("triage", "todo", "ready", "running", "blocked", "done", "archived"):
+        for status in ("triage", "todo", "scheduled", "ready", "running", "blocked",
+                       "review", "done", "archived"):
             with self.subTest(status=status):
                 host = Host(response(status=status))
                 self.assertEqual(self.collect(host, [watch()]),
@@ -122,10 +123,19 @@ class NativeSnapshotTests(unittest.TestCase):
                                  [("kanban_show", {"task_id": "native-Exact_1"})])
 
 
+    def test_unrecognized_string_status_is_kept_as_unknown_not_dropped(self):
+        for status in ("DONE", "active", "parked", "x" * 500):
+            with self.subTest(status=status[:20]):
+                host = Host(response(status=status, updated_at="2026-10-03T11:00:00+00:00"))
+                self.assertEqual(self.collect(host, [watch()]),
+                                 {"watch-1": {"status": "unknown",
+                                              "updated_at": "2026-10-03T11:00:00+00:00"}})
+
+
     def test_unavailable_errors_and_malformed_snapshots_fail_closed_without_fallback(self):
         cases = [response(id="different-id"), response(id="native-exact_1"),
-                 response(id=None), response(id=1), response(status="DONE"),
-                 response(status="active"), response(status=None), response(status=[]),
+                 response(id=None), response(id=1),
+                 response(status=None), response(status=[]),
                  response(status=True), {}, {"task": None}, {"task": []},
                  {"task": {"id": "native-Exact_1"}},
                  {"id": "native-Exact_1", "status": "done"},

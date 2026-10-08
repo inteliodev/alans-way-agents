@@ -140,7 +140,8 @@ def collect(home: Path, ledger, ctx=None):
                       for k, v in task.items() if k in allowed})
         if task.get("native_task_id"):
             current = native.get(task["id"])
-            if current is None or current["status"] == "blocked":
+            # Missing, blocked, or a status this plugin does not know: fail closed.
+            if current is None or current["status"] in {"blocked", "unknown"}:
                 tasks[-1]["status"] = "blocked"
             elif current["status"] in {"done", "archived"}:
                 tasks[-1]["status"] = "done"

@@ -13,7 +13,7 @@ commands in this runbook use the fork. The original author remains capthvnsen.
 
 | What | How to pin |
 |---|---|
-| Hermes | Commit `d9ef91e9d5a00c185fabc47d332994ab2280480a` (v0.21.5 + upstream `main` fixes through `7dab93b06e`, merged 2026-10-07; previous pin `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`), branch `intelio/pinned` of the clean fork `inteliodev/hermes-agent` (fork of `NousResearch/hermes-agent`). Upgrades only by merging an upstream release into `intelio/pinned` (section 9). `setup.sh` does not install Hermes. It expects `hermes` on `PATH` at `>= 0.21`. |
+| Hermes | Commit `d9ef91e9d5a00c185fabc47d332994ab2280480a` (v0.21.5 + upstream `main` fixes through `7dab93b06e`, merged 2026-10-07; previous pin `5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`), branch `intelio/pinned` of the clean fork `inteliodev/hermes-agent` (fork of `NousResearch/hermes-agent`). Upgrades only by merging an upstream release into `intelio/pinned` (section 9) and following the pin bump checklist there. `setup.sh` does not install Hermes. It expects `hermes` on `PATH` at `>= 0.21`. |
 | Desktop repo | `ALANS_WAY_REPO` (default `https://github.com/inteliodev/alans-way`). `ALANS_WAY_REF` defaults to branch `cursor/intelio-harness-layer-8db4` until that branch merges. After it merges, set `ALANS_WAY_REF` to `main` or a full 40-character SHA. |
 | This repo | `ALANS_WAY_AGENTS_REPO` (default `https://github.com/inteliodev/alans-way-agents`). `ALANS_WAY_AGENTS_REF` is optional; set it to a full SHA to pin. Empty means the default branch. |
 
@@ -29,6 +29,12 @@ export ALANS_WAY_AGENTS_REF=
 ```
 
 `--dry-run` prints the plan and writes nothing. Review it before a real run.
+
+`requires_hermes: ">=0.21"` in `alans-way/plugin.yaml` is a floor, not a tested
+range. Tested range: Hermes `5d3c059` (v0.21.5) and `d9ef91e` (v0.21.5 +
+upstream `main` @ `7dab93b06e`). Newer upstream commits can change CLI flags,
+config lookup and tool payloads without a version bump, so anything past
+`d9ef91e` is untested until it passes the checklist in section 9.
 
 ## 1. Tailscale on the VPS and the Mac
 
@@ -262,6 +268,8 @@ On the VPS, after a real install:
 `--verify` changes nothing. Expect:
 
 - plugin `alans-way` installed
+- gateway injection allowed for `alans-way` (read from the default home, where
+  the plugin is installed — not from `--profile`)
 - gateway hook present
 - `proactivity` enabled for Telegram on the selected profile, built-in `browser` toolset disabled
 - managed `workspace_browser` block in that profile's `config.yaml`
@@ -318,14 +326,55 @@ systemctl --user restart hermes-gateway.service
 
 Then run section 8 and check `journalctl --user -u hermes-gateway` for auth
 errors. Do not run `hermes -p intelio auth ...` — at 5d3c059 profile-level
-`auth add openai-codex` drops credentials; the Codex credential lives in the
-default store `~/.hermes/auth.json`.
+`auth add openai-codex` dropped credentials (not re-checked at d9ef91e); the
+Codex credential lives in the default store `~/.hermes/auth.json`.
+
+### Hermes pin bump checklist
+
+The plugin depends on Hermes behavior that changes on upstream `main` without
+a version bump. Examples already absorbed (all inside the `d9ef91e` pin):
+
+| Upstream commit | Change | Plugin side |
+|---|---|---|
+| `0f0b0a12aa` | `plugins install --force` refuses while the gateway is live unless `--allow-live-gateway` | `scripts/hermes-compat.sh` passes the flag when `install --help` lists it, then `setup.sh` restarts the gateway |
+| `7b2ff7a7d4` | `allow_gateway_injection` is read from the config of the home whose plugin manager loaded the plugin, not the calling profile | `setup.sh` writes it to the default home and the bound profile; `--verify` reads the default home |
+| `96db175da7` | kanban statuses add `scheduled` and `review` | `proactive_native.py` accepts them; unknown statuses become `unknown` (fail-closed) |
+
+For every bump, before the VPS moves:
+
+1. **Contract checks.** List upstream commits between the old and new pin that
+   touch `hermes_cli/plugins*.py`, `hermes_cli/subcommands/plugins.py`,
+   `hermes_cli/kanban*.py`, `tools/kanban_tools_schemas.py`,
+   `gateway/run_plugin_injection.py` and `hermes_cli/config.py`:
+   `git log --oneline OLD..NEW -- <paths>`. For each, confirm the plugin still
+   matches: the CLI flags `setup.sh` calls (`plugins install/enable/list`,
+   `tools enable/disable`, `config get/set`, `proactivity ...`,
+   `gateway restart/stop`), the `plugins.entries.alans-way.*` keys and where
+   they are read, `ctx.dispatch_tool("kanban_show")` payload and statuses, and
+   `inject_message` semantics. Run this repo's tests and the `hermes-contract`
+   CI job against the new SHA.
+2. **Staging run.** On a staging host (or a throwaway `HERMES_HOME`) at the
+   new SHA: `./setup.sh --dry-run`, a real `./setup.sh --non-interactive`
+   re-run over an existing install with the gateway live (it must update the
+   plugin, restart the gateway, and exit 0), then `./setup.sh --verify`.
+   (`setup.sh` has no `--check`; `--verify` is the read-only check.)
+3. **Bump the pins in both repos.** Hermes fork: merge into `intelio/pinned`
+   (above). This repo: the Pins table and section 9 here,
+   `docs/intelio-vps-srv1685012.md`, and `HERMES_PIN` in
+   `.github/workflows/tests.yml`. Desktop repo `inteliodev/alans-way`: its
+   Hermes pin text. Update the tested range above; raise `requires_hermes`
+   only when the plugin stops working on the old floor.
+4. **Record the rollback SHA.** Before `git checkout --detach <new-sha>` on
+   the VPS, record the current SHA (`git -C ~/.hermes/hermes-agent rev-parse
+   HEAD`) and the backup/rollback script path in
+   `docs/intelio-vps-srv1685012.md`. Current: `d9ef91e`, rollback target
+   `5d3c059`.
 
 ## 10. Hermes API server for clients (tailnet only)
 
 The Mac app's Remote Hermes (VPS) mode (desktop repo
 `docs/intelio-remote-hermes.md`) talks to the Hermes API server built into the
-gateway at 5d3c059. It serves the gateway's own session store, so app and
+gateway (since 5d3c059; current pin d9ef91e). It serves the gateway's own session store, so app and
 Telegram share sessions, memory and skills.
 
 The multiplexed gateway's listener is configured by the default profile;
@@ -365,8 +414,9 @@ From outside the tailnet `http://<public-ip>:8642` must not connect.
 ## 11. Drafts-only iMessage (BlueBubbles on the Mac)
 
 Hayden's personal iMessage stays on the MacBook. A BlueBubbles server there
-answers the VPS over Tailscale only. Profile `intelio` (Hermes v0.21.5, pin
-`5d3c05977bb3c8b7cfd6b3e39d96f6e35a9e0662`) gets plugin tools that call the
+answers the VPS over Tailscale only. Profile `intelio` (Hermes pin
+`d9ef91e9d5a00c185fabc47d332994ab2280480a`, v0.21.5 + upstream `main` @
+`7dab93b06e`) gets plugin tools that call the
 REST API. Do **not** enable Hermes' built-in `bluebubbles` gateway platform.
 That adapter makes the Mac's Apple ID the bot identity and auto-replies to
 incoming texts from his contacts.
