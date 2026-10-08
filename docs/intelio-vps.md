@@ -339,13 +339,15 @@ a version bump. Examples already absorbed (all inside the `d9ef91e` pin):
 | `0f0b0a12aa` | `plugins install --force` refuses while the gateway is live unless `--allow-live-gateway` | `scripts/hermes-compat.sh` passes the flag when `install --help` lists it, then `setup.sh` restarts the gateway |
 | `7b2ff7a7d4` | `allow_gateway_injection` is read from the config of the home whose plugin manager loaded the plugin, not the calling profile | `setup.sh` writes it to the default home and the bound profile; `--verify` reads the default home |
 | `96db175da7` | kanban statuses add `scheduled` and `review` | `proactive_native.py` accepts them; unknown statuses become `unknown` (fail-closed) |
+| (pin `d9ef91e`) | MCP tools are named `mcp__<server>__<tool>`; `${VAR}` in MCP `url`/`headers` resolves from the serving profile's `.env` and an unresolved ref fails closed | section 12; `hermes-contract` runs `scripts/hermes_computers_contract.py` |
 
 For every bump, before the VPS moves:
 
 1. **Contract checks.** List upstream commits between the old and new pin that
    touch `hermes_cli/plugins*.py`, `hermes_cli/subcommands/plugins.py`,
    `hermes_cli/kanban*.py`, `tools/kanban_tools_schemas.py`,
-   `gateway/run_plugin_injection.py` and `hermes_cli/config.py`:
+   `gateway/run_plugin_injection.py`, `hermes_cli/config.py` and
+   `tools/mcp_tool_*.py`:
    `git log --oneline OLD..NEW -- <paths>`. For each, confirm the plugin still
    matches: the CLI flags `setup.sh` calls (`plugins install/enable/list`,
    `tools enable/disable`, `config get/set`, `proactivity ...`,
@@ -499,6 +501,116 @@ grep -n 'bluebubbles' ~/.hermes/profiles/intelio/config.yaml || echo "no bluebub
 5. Changing the wording means a new draft. The old text is what an earlier
    approval covered.
 
+## 12. Your computers (intelio node)
+
+**What it gives.** The intelio agent can use every computer you enrolled in
+the intelio desktop app (Windows or macOS): list and read files, search,
+write files, run commands and take screenshots, as that computer's signed-in
+user. The desktop node dials out to the relay inside `intelio-pwa` on this
+VPS; the relay serves one MCP server for Hermes on
+`http://127.0.0.1:8645/mcp` (loopback only). Interface contract and authority
+rules (no elevation without a confirm dialog on the computer, kill switch in
+Settings, audit log) live in the desktop repo `inteliodev/alans-way`.
+
+**What setup writes.** For each listed profile, only Hermes configuration:
+
+```yaml
+mcp_servers:
+  intelio_computers:
+    url: http://127.0.0.1:8645/mcp
+    headers:
+      Authorization: "Bearer ${INTELIO_NODES_MCP_TOKEN}"
+    timeout: 300
+    connect_timeout: 30
+    elicitation:
+      timeout: 120   # push approval prompt; ends before the relay's 150 s wait
+```
+
+plus `INTELIO_NODES_MCP_TOKEN=<token>` in that profile's `.env` (mode 600),
+copied from `~/.config/intelio/nodes-mcp.token`, which the relay installer
+(`mobile/deploy/install-on-vps.sh` in the desktop repo) creates. Hermes expands
+`${INTELIO_NODES_MCP_TOKEN}` from the profile's own `.env` when it connects.
+The token never appears on a command line or in setup output. If the token
+file is missing, setup prints one note and skips this step.
+
+**Pushes ask Hayden.** Reading, writing, running commands and driving the
+computer need no approval. A push (`git push`, `gh pr merge`, `gh repo sync`,
+...) sent through `run_command`, `start_session` or `send_input` makes the relay
+ask through MCP elicitation, which Hermes shows as its own approval prompt
+(inline in the intelio app, buttons in Telegram). Allow covers that one command;
+Don't allow, no answer within `elicitation.timeout`, or a surface that cannot
+ask (cron, `-q`) refuses it. Protected secret files (SSH keys, `.env`,
+`auth.json`, credential stores) are refused outright. Details: `docs/intelio-node.md`
+in the desktop repo.
+
+Hermes names the tools `mcp__intelio_computers__<tool>`, for example
+`mcp__intelio_computers__list_computers` and
+`mcp__intelio_computers__run_command` (checked against the pin in CI).
+
+**Which profiles.** `intelio` only, by default. PRC, Alignment and HHP are
+client agents and never get your computers unless you list them:
+
+```sh
+./setup.sh --computers-profiles intelio            # default
+./setup.sh --computers-profiles intelio,alignment  # explicit opt-in
+./setup.sh --no-computers                          # leave every entry alone
+./setup.sh --verify                                # entry, token, relay 401 check
+```
+
+`--verify` checks each listed profile: token present in `.env` with mode 600
+and equal to the relay token, the entry's url/timeouts (including
+`elicitation.timeout`), and that the
+Authorization header resolves from that profile's `.env`. It also POSTs to the
+relay without a token and expects 401. A relay that is not running is a
+warning, not a failure. When the entry or token changed, setup restarts the
+gateway once at the end (Hermes also reconciles `mcp_servers` on its
+housekeeping tick, so a missed restart only delays the tools).
+
+**Disable.** Per profile, without deleting anything (setup keeps it on later
+re-runs, because it only sets `url`, `headers.Authorization`, `timeout`,
+`connect_timeout` and `elicitation.timeout`):
+
+```sh
+hermes -p intelio config set mcp_servers.intelio_computers.enabled false
+```
+
+Or remove it and re-run setup with `--no-computers` from then on:
+
+```sh
+hermes -p intelio mcp remove intelio_computers
+```
+
+Turning off "Allow intelio agents to use this computer" in the desktop app's
+Settings disconnects one computer immediately.
+
+**Revoke a computer.** On the VPS, in the desktop repo checkout:
+`node mobile/pwa/nodes-cli.cjs list`, then
+`node mobile/pwa/nodes-cli.cjs revoke <name|id>`. The device is disconnected
+and refused on reconnect. To cut Hermes off from the relay entirely, replace
+`~/.config/intelio/nodes-mcp.token` the way the relay installer documents and
+restart `intelio-pwa`; Hermes then gets 401 until `setup.sh` is re-run and
+copies the new value into each profile's `.env`.
+
+**Why Hermes updates do not break it.**
+
+- Config only. No Hermes source, patch, plugin hook or monkeypatch is
+  involved; setup writes `mcp_servers.intelio_computers` with
+  `hermes config set` (the open `mcp_servers` dict, `hermes_cli/config.py`
+  `_OPEN_DICT_TOP_LEVEL_KEYS`) and a line in the profile's `.env`.
+  `hermes mcp add` is not used: at the pin it is interactive, probes the
+  server before saving, stores the key under its own name
+  (`MCP_<SERVER>_API_KEY`) and has no `timeout` option.
+- MCP is a public standard. Hermes talks to the relay with the official
+  Python `mcp` client (streamable HTTP); the relay is a plain MCP server.
+  Either side can move as long as both speak MCP.
+- CI contract check. The `hermes-contract` job installs Hermes at the pinned
+  SHA, applies this config to a throwaway profile, starts
+  `scripts/fake_nodes_mcp.py` (a stdlib MCP server with the contract's tool
+  names and bearer check) and runs `scripts/hermes_computers_contract.py`,
+  which calls Hermes' own `discover_mcp_tools()` and dispatches two tools. A
+  pin bump that changes config loading, `${VAR}` expansion, transport or tool
+  naming fails there before the VPS moves.
+
 ## What this repo cannot prove
 
 A passing `--verify` here does not show that the Hostinger firewall panel only
@@ -506,5 +618,6 @@ has port 22, that the phone can open noVNC, that snap Chromium actually paints
 on `:99`, that `snap stop --disable cups` left nothing listening on port 631,
 that Telegram is not also polling on the Mac, that the Hermes API server is
 reachable only on the tailnet, that BlueBubbles answers only on the tailnet
-and the approval card actually blocks a send, or that the Mac account is
-non-admin. Those are checked on the VPS, the Mac, and the phone.
+and the approval card actually blocks a send, that the Mac account is
+non-admin, or that the real relay (not the CI fake) serves the intelio
+computers tools. Those are checked on the VPS, the Mac, and the phone.

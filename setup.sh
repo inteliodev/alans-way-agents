@@ -20,6 +20,7 @@
 #        --hermes-home DIR --desktop-dir DIR --skip-browser --skip-services
 #        --desktop-stack --desktop-user USER --novnc-bind ADDR --vnc-password-file PATH
 #        --bind --timezone IANA --restart --non-interactive --verify --dry-run
+#        --computers-profiles LIST --no-computers
 set -eu
 
 # Single overridable clone locations. Do not clobber a value the caller set,
@@ -39,6 +40,7 @@ HERMES_HOME="" DESKTOP_DIR="" MAC_MCP="" MAC_NODE=""
 DESKTOP_USER="" NOVNC_BIND="127.0.0.1" VNC_PASSFILE=""
 SKIP_BROWSER=0 SKIP_SERVICES=0 DO_BIND=0 DO_RESTART=0 NON_INTERACTIVE=0 VERIFY=0
 DO_DESKTOP=0 DRY_RUN=0 NOVNC_BIND_SET=0 PLUGIN_RESTART_REQUIRED=0
+COMPUTERS_PROFILES="intelio" DO_COMPUTERS=1 COMPUTERS_RESTART=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -63,6 +65,8 @@ while [ $# -gt 0 ]; do
     --non-interactive) NON_INTERACTIVE=1; shift;;
     --verify) VERIFY=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
+    --computers-profiles) COMPUTERS_PROFILES="$2"; shift 2;;
+    --no-computers) DO_COMPUTERS=0; shift;;
     -h|--help)
       cat <<'EOF'
 setup.sh — Alan's Way bootstrap for the Hermes gateway host (usually a VPS).
@@ -87,6 +91,11 @@ setup.sh — Alan's Way bootstrap for the Hermes gateway host (usually a VPS).
   --restart        restart the gateway at the end without asking
   --verify         check an existing install without changing anything
   --dry-run        print the install plan and write nothing
+  --computers-profiles LIST
+                   comma list of Hermes profiles that get your enrolled
+                   computers (intelio node MCP server). Default: intelio.
+                   PRC/Alignment/HHP never get them unless listed here.
+  --no-computers   leave every profile's intelio_computers entry untouched
   --skip-browser / --skip-services / --non-interactive for constrained runs
 Repos: ALANS_WAY_REPO, ALANS_WAY_REF (default cursor/intelio-harness-layer-8db4),
        ALANS_WAY_AGENTS_REPO, ALANS_WAY_AGENTS_REF. See docs/intelio-vps.md.
@@ -136,6 +145,20 @@ if [ -n "$DESKTOP_USER" ] && ! safe_name "$DESKTOP_USER"; then
 fi
 if [ "$DRY_RUN" = 1 ]; then
   NON_INTERACTIVE=1
+fi
+if [ "$DO_COMPUTERS" = 1 ]; then
+  _old_ifs=$IFS
+  IFS=,
+  set -f
+  for _cp in $COMPUTERS_PROFILES; do
+    _cp=$(printf '%s' "$_cp" | tr -d ' ')
+    if [ -n "$_cp" ] && ! safe_name "$_cp"; then
+      echo "setup: bad --computers-profiles entry" >&2
+      exit 2
+    fi
+  done
+  set +f
+  IFS=$_old_ifs
 fi
 
 is_full_sha() {
@@ -246,6 +269,10 @@ if [ -f "${REPO_DIR:-$SCRIPT_DIR}/scripts/hermes-compat.sh" ]; then
   # shellcheck disable=SC1091
   . "${REPO_DIR:-$SCRIPT_DIR}/scripts/hermes-compat.sh"
 fi
+if [ -f "${REPO_DIR:-$SCRIPT_DIR}/scripts/intelio-computers.sh" ]; then
+  # shellcheck disable=SC1091
+  . "${REPO_DIR:-$SCRIPT_DIR}/scripts/intelio-computers.sh"
+fi
 
 if [ "$DO_DESKTOP" = 1 ] || [ "$NOVNC_BIND_SET" = 1 ]; then
   if ! novnc_bind_ok "$NOVNC_BIND"; then
@@ -294,6 +321,16 @@ if [ "$DRY_RUN" = 1 ]; then
     else
       say "  snap Chromium profile: <desktop-home>/snap/chromium/common/hermes-alans-way"
     fi
+  fi
+  if [ "$DO_COMPUTERS" = 1 ]; then
+    _tok="${INTELIO_NODES_MCP_TOKEN_FILE:-$HOME/.config/intelio/nodes-mcp.token}"
+    if [ -f "$_tok" ]; then
+      say "  computers: mcp_servers.intelio_computers -> http://127.0.0.1:8645/mcp for profiles: $COMPUTERS_PROFILES"
+    else
+      say "  computers: no relay token at $_tok — would skip"
+    fi
+  else
+    say "  computers: skipped (--no-computers)"
   fi
   say "dry-run: no changes made"
   exit 0
@@ -353,6 +390,11 @@ print("bound" if s.get("route_bound") else "unbound", "on" if s.get("enabled") i
       warn "no workspace_browser block in $home/config.yaml"
     fi
   done
+  if [ "$DO_COMPUTERS" = 1 ] && command -v intelio_computers_verify >/dev/null 2>&1; then
+    step "Your computers (intelio node)"
+    _cv="$(intelio_computers_verify "$HERMES_HOME" "$COMPUTERS_PROFILES")" || FAILS=$((FAILS + 1))
+    say "$_cv"
+  fi
   [ "$FAILS" = 0 ] && say "setup: all required checks passed" || say "setup: $FAILS check(s) failed"
   exit "$([ "$FAILS" = 0 ] && echo 0 || echo 1)"
 fi
@@ -376,6 +418,10 @@ if [ -z "$REPO_DIR" ]; then
   else
     bad "missing $REPO_DIR/scripts/hermes-compat.sh — checkout is older than this setup.sh"
     exit 1
+  fi
+  if [ -f "$REPO_DIR/scripts/intelio-computers.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$REPO_DIR/scripts/intelio-computers.sh"
   fi
 fi
 
@@ -796,6 +842,23 @@ else
   say "  skipped (no --bot-id). Re-run with --bot-id <numeric-telegram-bot-id>."
 fi
 
+# ------------------------------------------------- your computers (intelio node)
+# Config-only: an mcp_servers.intelio_computers entry plus the relay token in
+# each listed profile's .env (docs/intelio-vps.md, "Your computers").
+step "Your computers (intelio node)"
+if [ "$DO_COMPUTERS" = 0 ]; then
+  say "  skipped (--no-computers); existing entries are left as they are"
+elif ! command -v intelio_computers_apply >/dev/null 2>&1; then
+  warn "scripts/intelio-computers.sh missing from $REPO_DIR — computers not wired"
+else
+  intelio_computers_apply "$HERMES_HOME" "$COMPUTERS_PROFILES" || FAILS=$((FAILS + 1))
+  # Hermes reconciles mcp_servers on its housekeeping tick, but one restart
+  # makes the new tools appear now (folded into the restart below).
+  if [ "$INTELIO_COMPUTERS_CHANGED" = 1 ]; then
+    COMPUTERS_RESTART=1
+  fi
+fi
+
 # ------------------------------------------------------------- gateway restart
 step "Gateway restart"
 GW_HINT="A running gateway holds already-imported code — restart it to load the plugin."
@@ -804,7 +867,10 @@ GW_HINT="A running gateway holds already-imported code — restart it to load th
 if [ "$PLUGIN_RESTART_REQUIRED" = 1 ]; then
   say "  the plugin was replaced while a gateway was live — restarting it"
 fi
-if [ "$DO_RESTART" = 1 ] || [ "$PLUGIN_RESTART_REQUIRED" = 1 ] \
+if [ "$COMPUTERS_RESTART" = 1 ] && [ "$PLUGIN_RESTART_REQUIRED" = 0 ]; then
+  say "  computers config changed — restarting so the intelio_computers tools load"
+fi
+if [ "$DO_RESTART" = 1 ] || [ "$PLUGIN_RESTART_REQUIRED" = 1 ] || [ "$COMPUTERS_RESTART" = 1 ] \
     || { [ "$NON_INTERACTIVE" = 0 ] && [ -r /dev/tty ] && confirm "  Restart the Hermes gateway now?"; }; then
   if hermes gateway restart >/dev/null 2>&1; then
     ok "hermes gateway restart"

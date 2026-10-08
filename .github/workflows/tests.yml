@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
       - run: python -m unittest discover -s tests
       - run: python scripts/check_publication.py
-      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh
+      - run: shellcheck -s sh -S warning setup.sh setup-workspace.sh alans-way/scripts/mac-watch.sh scripts/chromium-profile.sh scripts/mac-bluebubbles-setup.sh scripts/hermes-compat.sh scripts/intelio-computers.sh
 
   # Real Hermes at the pinned SHA in a throwaway HERMES_HOME: the plugin loads
   # through the real plugin manager and the CLI surface setup.sh calls exists.
@@ -87,3 +87,35 @@ jobs:
           assert PluginContext(loaded.manifest, manager)._gateway_injection_allowed() is True
           print("ok   _gateway_injection_allowed() is True for alans-way")
           PY
+      - name: Intelio computers MCP wiring is discovered by pinned Hermes
+        # Config-only wiring (docs/intelio-vps.md section 12): setup's helper
+        # writes mcp_servers.intelio_computers + the profile .env token; Hermes'
+        # own discover_mcp_tools() must find the fake relay's tools and call one.
+        run: |
+          set -eux
+          hermes profile create intelio </dev/null
+          export INTELIO_NODES_MCP_TOKEN_FILE="$RUNNER_TEMP/nodes-mcp.token"
+          python -c 'import secrets; print(secrets.token_hex(32))' > "$INTELIO_NODES_MCP_TOKEN_FILE"
+          chmod 600 "$INTELIO_NODES_MCP_TOKEN_FILE"
+          python scripts/fake_nodes_mcp.py --token-file "$INTELIO_NODES_MCP_TOKEN_FILE" &
+          relay=$!
+          trap 'kill "$relay"' EXIT
+          for _ in $(seq 50); do
+            python -c 'import socket; socket.create_connection(("127.0.0.1", 8645), 0.2).close()' 2>/dev/null && break
+            sleep 0.2
+          done
+          sh scripts/intelio-computers.sh apply "$HERMES_HOME" intelio | tee "$RUNNER_TEMP/apply1.txt"
+          grep -qx 'changed=1' "$RUNNER_TEMP/apply1.txt"
+          sh scripts/intelio-computers.sh apply "$HERMES_HOME" intelio | tee "$RUNNER_TEMP/apply2.txt"
+          grep -qx 'changed=0' "$RUNNER_TEMP/apply2.txt"
+          sh scripts/intelio-computers.sh verify "$HERMES_HOME" intelio | tee "$RUNNER_TEMP/verify.txt"
+          grep -q 'unauthenticated POST (401)' "$RUNNER_TEMP/verify.txt"
+          set +x
+          if grep -qF "$(cat "$INTELIO_NODES_MCP_TOKEN_FILE")" "$RUNNER_TEMP"/apply1.txt "$RUNNER_TEMP"/apply2.txt "$RUNNER_TEMP"/verify.txt; then
+            echo "FAIL token printed"; exit 1
+          fi
+          set -x
+          test "$(stat -c %a "$HERMES_HOME/profiles/intelio/.env")" = 600
+          grep -q 'INTELIO_NODES_MCP_TOKEN' "$HERMES_HOME/profiles/intelio/config.yaml"
+          test ! -e "$HERMES_HOME/.env" || ! grep -q INTELIO_NODES_MCP_TOKEN "$HERMES_HOME/.env"
+          HERMES_HOME="$HERMES_HOME/profiles/intelio" python scripts/hermes_computers_contract.py
