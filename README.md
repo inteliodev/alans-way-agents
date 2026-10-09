@@ -1,3 +1,5 @@
+> **Moved.** Development continues in the private repository `inteliodev/intelio-harness` (this repository is archived as of 2026-10-08).
+
 # Alan's Way — agent plugin
 
 **The behavior half of [Intelio](https://github.com/inteliodev/alans-way), Hayden Ashley's fork of [Hermes — Alan's Way](https://github.com/capthvnsen/alans-way) by capthvnsen.**
